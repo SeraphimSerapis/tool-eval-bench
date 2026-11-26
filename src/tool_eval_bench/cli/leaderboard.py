@@ -120,7 +120,9 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
     """Print a beautiful, screenshottable leaderboard table."""
     from tool_eval_bench.application.run_queries import recent_runs
 
-    runs = recent_runs(limit=500)  # Fetch many to deduplicate
+    runs = recent_runs(
+        limit=500, run_type="tool_eval", status="completed"
+    )  # Fetch many to deduplicate
 
     if not runs:
         console.print("\n  [dim]No benchmark runs found. Run some benchmarks first![/]\n")
@@ -303,9 +305,12 @@ def export_runs(
     """Export all stored runs in CSV or JSON format."""
     from tool_eval_bench.application.run_queries import recent_runs
 
-    runs = recent_runs(limit=limit)
+    runs = recent_runs(limit=limit, run_type="tool_eval", status="completed")
 
     if not runs:
+        if fmt == "json" and not output:
+            print("[]")
+            return
         console.print("\n  [dim]No benchmark runs found.[/]\n")
         return
 

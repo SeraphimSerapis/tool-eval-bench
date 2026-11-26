@@ -57,6 +57,13 @@ _STATIC_MIME_TYPES = {
     "index.html": "text/html; charset=utf-8",
     "styles.css": "text/css; charset=utf-8",
     "app.js": "application/javascript; charset=utf-8",
+    "dom.js": "application/javascript; charset=utf-8",
+    "state.js": "application/javascript; charset=utf-8",
+    "components.js": "application/javascript; charset=utf-8",
+    "history.js": "application/javascript; charset=utf-8",
+    "leaderboard.js": "application/javascript; charset=utf-8",
+    "compare.js": "application/javascript; charset=utf-8",
+    "live.js": "application/javascript; charset=utf-8",
 }
 
 
@@ -316,7 +323,7 @@ def _build_comparison_payload(raw_a: Mapping[str, Any], raw_b: Mapping[str, Any]
     mcnemar["chi2"] = round(mcnemar["chi2"], 4)
     mcnemar["p_value"] = round(mcnemar["p_value"], 6)
 
-    paired_stats = compute_paired_comparison(map_a, map_b, all_ids)
+    paired_stats = compute_paired_comparison(map_a, map_b, all_ids, run_a=run_a, run_b=run_b)
     paired_stats["mean_pct_delta"] = round(paired_stats["mean_pct_delta"], 2)
     paired_stats["ci95_low_pct"] = round(paired_stats["ci95_low_pct"], 2)
     paired_stats["ci95_high_pct"] = round(paired_stats["ci95_high_pct"], 2)
@@ -452,7 +459,9 @@ def build_starlette_app(
         backend_filter = (params.get("backend") or "").strip().lower()
         search = (params.get("q") or "").strip().lower()
 
-        all_rows = extract_leaderboard_rows(recent_runs(limit=_LEADERBOARD_WINDOW))
+        all_rows = extract_leaderboard_rows(
+            recent_runs(limit=_LEADERBOARD_WINDOW, run_type="tool_eval", status="completed")
+        )
         cohorts_map: dict[str, dict[str, Any]] = {}
         for row in all_rows:
             row["display_model"] = shorten_model_name(str(row["model"]))
@@ -495,7 +504,9 @@ def build_starlette_app(
         fmt = (request.query_params.get("format") or "json").lower()
         if fmt not in {"csv", "json"}:
             return _error(f"Unsupported format {fmt!r}. Use 'csv' or 'json'.", 400)
-        rows = extract_leaderboard_rows(recent_runs(limit=_LEADERBOARD_WINDOW))
+        rows = extract_leaderboard_rows(
+            recent_runs(limit=_LEADERBOARD_WINDOW, run_type="tool_eval", status="completed")
+        )
         body, content_type, filename = _format_export_payload(rows, fmt)
         return Response(
             body,

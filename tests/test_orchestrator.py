@@ -2171,3 +2171,226 @@ async def test_default_turn_budget_is_eight_and_surfaces_budget_stop_notes() -> 
         scenarios=[scenario],
     )
     assert "(turn cap)" in display._format_result_line(scenario, result)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        httpx.WriteError("broken pipe"),
+        httpx.CloseError("close failed"),
+        httpx.ProxyError("proxy rejected tunnel"),
+        httpx.LocalProtocolError("illegal request state"),
+        httpx.ConnectError("connection refused"),
+        httpx.ReadError("connection reset"),
+        httpx.RemoteProtocolError("peer closed connection"),
+    ],
+    ids=[
+        "WriteError",
+        "CloseError",
+        "ProxyError",
+        "LocalProtocolError",
+        "ConnectError",
+        "ReadError",
+        "RemoteProtocolError",
+    ],
+)
+@pytest.mark.asyncio
+async def test_transport_errors_classify_as_connection_error_and_exclude_from_score(
+    exc: httpx.TransportError,
+) -> None:
+    from tool_eval_bench.runner.orchestrator import _classify_runtime_error, score_results
+
+    assert _classify_runtime_error(exc) == FailureKind.CONNECTION_ERROR
+
+    passing = _fix_scenario("FIX-TR-OK")
+    failing = _fix_scenario("FIX-TR-NET")
+    res_fail = await run_scenario(
+        _ScriptedAdapter([exc]),
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=failing,
+    )
+    assert res_fail.status == ScenarioStatus.FAIL
+    assert res_fail.failure_kind == FailureKind.CONNECTION_ERROR
+    assert res_fail.is_infrastructure_failure is True
+
+    res_ok = await run_scenario(
+        _ScriptedAdapter([ChatCompletionResult(content="Done.", finish_reason="stop")]),
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=passing,
+    )
+    summary = score_results([res_ok, res_fail], [passing, failing])
+    assert summary.excluded_scenarios == ["FIX-TR-NET"]
+    assert summary.final_score == 100
+    assert summary.completion_rate == 50.0
+
+
+def test_timeout_exceptions_remain_timeout_after_transport_expansion() -> None:
+    from tool_eval_bench.runner.orchestrator import _classify_runtime_error
+
+    for exc in (
+        asyncio.TimeoutError(),
+        httpx.ReadTimeout("read timed out"),
+        httpx.ConnectTimeout("connect timed out"),
+        httpx.WriteTimeout("write timed out"),
+        httpx.PoolTimeout("pool timed out"),
+    ):
+        assert _classify_runtime_error(exc) == FailureKind.TIMEOUT
+
+
+@pytest.mark.asyncio
+async def test_run_all_scenarios_parallel_with_turn_reviewer() -> None:
+    from tool_eval_bench.domain.review import ReviewerSettings
+    from tool_eval_bench.runner.review import TurnReviewer
+
+    scenarios = [
+        _fix_scenario(
+            f"PAR-REV-{idx}",
+            evaluate=lambda state: ScenarioEvaluation(
+                ScenarioStatus.PASS if "final" in state.final_answer else ScenarioStatus.FAIL,
+                2 if "final" in state.final_answer else 0,
+                "checked",
+            ),
+        )
+        for idx in range(3)
+    ]
+
+    class _RoutingAdapter(BackendAdapter):
+        async def chat_completion(
+            self,
+            *,
+            model: str,
+            messages: list[ChatMessage],
+            **kwargs: Any,
+        ) -> ChatCompletionResult:
+            # First draft omits "final" when no revision feedback has been given yet;
+            # after reviewer feedback the revision includes "final".
+            last_text = str(messages[-1].get("content", ""))
+            if "Reviewer feedback" in last_text or "include 'final'" in last_text:
+                return ChatCompletionResult(content="revised final answer", finish_reason="stop")
+            return ChatCompletionResult(content="draft answer", finish_reason="stop")
+
+    class _ReviewerAdapter(BackendAdapter):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat_completion(
+            self,
+            *,
+            model: str,
+            messages: list[ChatMessage],
+            **kwargs: Any,
+        ) -> ChatCompletionResult:
+            self.calls += 1
+            return ChatCompletionResult(
+                content='{"verdict": "revise", "feedback": "include \'final\' in your reply"}',
+                finish_reason="stop",
+                prompt_tokens=10,
+                completion_tokens=5,
+            )
+
+    reviewer_adapter = _ReviewerAdapter()
+    reviewer = TurnReviewer(
+        reviewer_adapter,
+        ReviewerSettings(
+            model="critic",
+            base_url="http://critic.test/v1",
+            temperature=0.0,
+            timeout_seconds=30.0,
+            scope="final",
+            max_rounds=1,
+        ),
+    )
+
+    summary = await run_all_scenarios(
+        _RoutingAdapter(),
+        model="bench-model",
+        base_url="http://localhost:8000",
+        scenarios=scenarios,
+        concurrency=2,
+        reviewer=reviewer,
+    )
+
+    assert reviewer_adapter.calls == 3
+    assert summary.final_score == 100
+    assert [r.scenario_id for r in summary.scenario_results] == [s.id for s in scenarios]
+    for res in summary.scenario_results:
+        assert res.status == ScenarioStatus.PASS
+        assert res.review is not None
+        assert res.review["reviews"] == 1
+        assert res.review["revised"] == 1
+
+
+@pytest.mark.asyncio
+async def test_run_all_scenarios_parallel_handles_unexpected_task_exceptions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tool_eval_bench.runner import orchestrator
+
+    scenarios = [
+        _fix_scenario("GATHER-OK"),
+        _fix_scenario("GATHER-CRASH"),
+        _fix_scenario("GATHER-NET"),
+    ]
+
+    async def fake_run_scenario(
+        adapter: BackendAdapter, *, scenario: ScenarioDefinition, **kwargs: Any
+    ) -> ScenarioResult:
+        if scenario.id == "GATHER-CRASH":
+            raise RuntimeError("unexpected orchestrator crash")
+        if scenario.id == "GATHER-NET":
+            raise httpx.WriteError("socket broke outside loop")
+        return ScenarioResult(
+            scenario_id=scenario.id,
+            status=ScenarioStatus.PASS,
+            points=2,
+            summary="ok",
+        )
+
+    monkeypatch.setattr(orchestrator, "run_scenario", fake_run_scenario)
+
+    summary = await run_all_scenarios(
+        _ScriptedAdapter([]),
+        model="m",
+        base_url="http://localhost:8000",
+        scenarios=scenarios,
+        concurrency=2,
+    )
+
+    by_id = {r.scenario_id: r for r in summary.scenario_results}
+    assert [r.scenario_id for r in summary.scenario_results] == [
+        "GATHER-OK",
+        "GATHER-CRASH",
+        "GATHER-NET",
+    ]
+    assert by_id["GATHER-OK"].status == ScenarioStatus.PASS
+    assert by_id["GATHER-CRASH"].status == ScenarioStatus.FAIL
+    assert by_id["GATHER-CRASH"].failure_kind == FailureKind.MODEL_CRASH
+    assert "Unhandled error: unexpected orchestrator crash" in by_id["GATHER-CRASH"].summary
+    assert by_id["GATHER-NET"].status == ScenarioStatus.FAIL
+    assert by_id["GATHER-NET"].failure_kind == FailureKind.CONNECTION_ERROR
+    assert summary.excluded_scenarios == ["GATHER-NET"]
+    assert summary.final_score == 50
+
+
+def test_repair_json_str_escaped_quotes_mismatched_brackets_and_fallback() -> None:
+    # Escaped quote inside an unterminated string stays properly escaped.
+    repaired_quote = _repair_json_str(r'{"msg": "say \"hi')
+    assert json.loads(repaired_quote) == {"msg": 'say "hi'}
+
+    # Dangling trailing escape inside an unterminated string is closed cleanly.
+    repaired_slash = _repair_json_str('{"path": "C:\\\\dir\\')
+    assert json.loads(repaired_slash) == {"path": "C:\\dir\\"}
+
+    # Mismatched closing brackets cannot be safely repaired -> fall back to {}.
+    assert _repair_json_str('{"items": [1}}') == "{}"
+    assert _repair_json_str("}") == "{}"
+    assert _repair_json_str('{"a": ]}') == "{}"
+
+    # Structurally unrecoverable truncated key/value falls back to {}.
+    assert _repair_json_str('{"a": ') == "{}"
+    assert _repair_json_str("{not_json") == "{}"
+    assert _repair_json_str("   ") == "{}"

@@ -2104,3 +2104,105 @@ def test_parse_labels_does_not_backtrack_exponentially_on_an_unclosed_label():
     start = time.perf_counter()
     assert _parse_labels(hostile) == {}
     assert time.perf_counter() - start < 1.0
+
+
+# ---------------------------------------------------------------------------
+# Gap tests: scrape_snapshot, vLLM speculative_config, and single-pass parser
+# ---------------------------------------------------------------------------
+
+
+class TestScrapeAndProbeGaps:
+    @pytest.mark.asyncio
+    async def test_scrape_snapshot_handles_non_200_and_errors(self):
+        import httpx
+
+        from tool_eval_bench.runner.spec_live import scrape_snapshot
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            mode = request.headers.get("x-mode", "200")
+            if mode == "503":
+                return httpx.Response(503, text="unavailable")
+            if mode == "boom":
+                raise httpx.ConnectError("refused")
+            return httpx.Response(200, text="vllm:spec_decode_num_accepted_tokens_total 42\n")
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            assert (
+                await scrape_snapshot(client, "http://host:8000/metrics", {"x-mode": "503"}) is None
+            )
+            assert (
+                await scrape_snapshot(client, "http://host:8000/metrics", {"x-mode": "boom"})
+                is None
+            )
+            ok = await scrape_snapshot(client, "http://host:8000/metrics", {"x-mode": "200"})
+            assert ok is not None
+            assert ok.accepted_tokens == pytest.approx(42.0)
+
+    @pytest.mark.asyncio
+    async def test_probe_server_spec_info_reads_vllm_speculative_config(self, monkeypatch):
+        import httpx
+
+        from tool_eval_bench.runner import spec_live
+
+        seen_auth: list[str | None] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_auth.append(request.headers.get("authorization"))
+            if request.url.path.endswith("/models"):
+                return httpx.Response(200, json={"data": [{"id": "Qwen/Qwen3-32B"}]})
+            if request.url.path.endswith("/version"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "version": "0.11.0",
+                        "speculative_config": {
+                            "method": "eagle3",
+                            "model": "Qwen/Qwen3-0.6B-Eagle3",
+                            "num_speculative_tokens": 5,
+                        },
+                    },
+                )
+            return httpx.Response(404)
+
+        real_client = httpx.AsyncClient
+
+        def _mock_client(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_client(*args, **kwargs)
+
+        monkeypatch.setattr(spec_live.httpx, "AsyncClient", _mock_client)
+        info = await spec_live.probe_server_spec_info(
+            "http://localhost:8000/v1",
+            api_key="secret-token",
+            primary_model="Qwen3-32B",
+        )
+        assert info.target_model_name == "Qwen/Qwen3-32B"
+        assert info.spec_method == "eagle3"
+        assert info.draft_model_name == "Qwen/Qwen3-0.6B-Eagle3"
+        assert info.num_speculative_tokens == 5
+        assert seen_auth == ["Bearer secret-token", "Bearer secret-token"]
+
+    def test_single_pass_prometheus_parser_semantics(self):
+        from tool_eval_bench.runner.spec_live import _parse_prometheus_metrics
+
+        body = (
+            "# HELP vllm:kv_cache_usage_perc KV cache\n"
+            "# TYPE vllm:kv_cache_usage_perc gauge\n"
+            'vllm_gpu_cache_usage_perc{engine="0"} 0.25 1700000000\n'
+            'vllm:gpu_cache_usage_perc{engine="0"} 0.75\n'
+            'vllm:kv_cache_usage_perc{engine="0"} 1e400\n'
+            'vllm:kv_cache_usage_perc{engine="0"} NaN\n'
+            'custom_metric{a="x\\"y"} 3.5\n'
+            "bad_value_line 100abc\n"
+        )
+        parsed = _parse_prometheus_metrics(body)
+        assert parsed["vllm_gpu_cache_usage_perc"] == [({"engine": "0"}, 0.25)]
+        assert parsed["vllm:gpu_cache_usage_perc"] == [({"engine": "0"}, 0.75)]
+        assert "vllm:kv_cache_usage_perc" not in parsed
+        assert parsed["custom_metric"] == [({"a": 'x"y'}, 3.5)]
+        assert "bad_value_line" not in parsed
+
+        # Multi-alias non-sum gauge preserves first-line order from text.
+        snap = _parse_snapshot(body)
+        assert snap.gpu_cache_usage == pytest.approx(0.25)
+        assert snap.kv_cache_usage is None

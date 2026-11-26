@@ -1,31 +1,34 @@
 # Backends
 
 OpenAI-compatible backends must expose `/v1/chat/completions` and support the
-`tools` and `tool_choice` request fields the tool-call scenarios use. The
-accuracy benchmarks (GSM8K, MMLU, IFEval, needle) need only chat completions.
-The decision-model benchmark needs llama.cpp's `/v1/systemone` instead, and
-needs no chat endpoint; see [decision-models.md](decision-models.md).
+`tools` and `tool_choice` request fields used by the tool-call scenarios and the
+`toolscale` plugin. The non-tool plugins (GSM8K, MMLU, IFEval, needle) need only
+chat completions. The decision-model benchmark needs llama.cpp's `/v1/systemone`
+instead, and needs no chat endpoint; see [decision-models.md](decision-models.md).
 
-- **vLLM** — primary target
-- **SGLang** — OpenAI-compatible model server
-- **LiteLLM** — proxy for multiple backends
-- **llama.cpp** — lightweight local inference
-- **Strata** — OpenAI-compatible model server, identified by its declared health service or build information
-- **TabbyAPI** — OpenAI-compatible server, identified by its model owner or `/.well-known/serviceinfo`
-- **NInfer** — OpenAI-compatible inference engine, detected via `/v1/models`
-- **TandemLLM** — OpenAI-compatible engine, identified by its model owner or `Server` header
-- **TensorFold** serves MLX and CUDA models through the existing OpenAI adapter;
+- **vLLM**: primary target
+- **SGLang**: OpenAI-compatible model server
+- **LiteLLM**: proxy for multiple backends
+- **llama.cpp**: lightweight local inference
+- **Strata**: OpenAI-compatible model server, identified by its declared health service or build information
+- **TabbyAPI**: OpenAI-compatible server, identified by its model owner or `/.well-known/serviceinfo`
+- **NInfer**: OpenAI-compatible inference engine, detected via `/v1/models`
+- **TandemLLM**: OpenAI-compatible engine, identified by its model owner or `Server` header
+- **TensorFold**: serves MLX and CUDA models through the existing OpenAI adapter;
   detected by `owned_by: "tensorfold"` or the `tensorfold:` metrics namespace
-- **Flare** serves models via [Hyperflare](https://github.com/NVIDIA/hyperflare-inference) through
+- **Halogen Flash**: OpenAI-compatible engine identified by its native `halogen:` metrics namespace;
+  use `--backend halogen` when metrics are hidden
+- **Flare**: serves models via [Hyperflare](https://github.com/NVIDIA/hyperflare-inference) through
   the existing OpenAI adapter, and natively serves `/v1/messages` with `--format anthropic`;
   detected by the `flare_` metrics namespace or the `flare` metadata object on `/v1/models`
-- **Splash** serves GGUF models on Apple silicon ([incoai/splash](https://github.com/incoai/splash))
+- **Splash**: serves GGUF models on Apple silicon ([incoai/splash](https://github.com/incoai/splash))
   through the existing OpenAI adapter, and also serves `/v1/messages`; detected by the `splash_`
   metrics namespace, `owned_by: "splash"` on `/v1/models`, or the `Server: Splash` header
-- **Gemini** — supported through its native API as well as its OpenAI-compatible
+- **OpenAI**: hosted OpenAI API (`--backend openai`, or `--provider openai`), using the OpenAI-compatible adapter
+- **Gemini**: supported through its native API as well as its OpenAI-compatible
   endpoint; the native wire format is detected from the URL, and `--format` pins
   it manually
-- **Anthropic** — supported through the native Messages API (`/v1/messages`),
+- **Anthropic**: supported through the native Messages API (`/v1/messages`),
   which also covers gateways that front other models with it, such as OpenCode
   Zen; detected from the URL, or pinned with `--format anthropic`
 
@@ -116,8 +119,14 @@ failures, not empty answers. Partial tool calls from a failed stream are discard
 | `--spec-live` dashboard | ✅ Counters | ✅ Gauges | ✅ when backend metrics are separately reachable | ✅ Counters on current builds; engine-only fallback |
 
 OpenAI-compatible backends use `OpenAICompatibleAdapter`; native Gemini and the
-Anthropic Messages API each use their own adapter. If you hit a backend-specific
-issue, please
+Anthropic Messages API each use their own adapter. Before running a full suite
+against a new server configuration, run `tool-eval-bench probe --check-tools --check-template`
+to verify that the server's tool-call parser (for example `--enable-auto-tool-choice --tool-call-parser`
+on vLLM, `--tool-call-parser` on SGLang, including `gemma4`, or `--jinja` on llama.cpp) and
+chat template replay multi-turn tool calls without leaking raw markup or special tokens. See
+[cli-reference.md](cli-reference.md#server-readiness-check) and
+[troubleshooting.md](troubleshooting.md#start-by-isolating-the-endpoint). If you hit a
+backend-specific issue, please
 [open an issue](https://github.com/SeraphimSerapis/tool-eval-bench/issues).
 
 ## llama.cpp

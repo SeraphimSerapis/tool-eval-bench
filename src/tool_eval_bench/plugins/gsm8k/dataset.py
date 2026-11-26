@@ -120,6 +120,8 @@ def load_dataset(
         method=method,
         revision=_REVISION,
     )
+    partial_path = _CACHE_DIR / "test.partial.jsonl"
+    partial_path.unlink(missing_ok=True)
     logger.info("Cached %d items to %s", len(items), cache_path)
 
     return items
@@ -157,7 +159,10 @@ def _download_dataset(
 
     Returns ``(items, method)`` where method is ``"datasets"`` or ``"rest_api"``.
     """
-    from tool_eval_bench.plugins.hf_utils import load_via_datasets_lib
+    from tool_eval_bench.plugins.hf_utils import (
+        download_rows_paginated,
+        load_via_datasets_lib,
+    )
 
     # Fast path: datasets library (no rate limits)
     rows = load_via_datasets_lib(
@@ -170,61 +175,17 @@ def _download_dataset(
     if rows is not None:
         return _rows_to_items(rows), "datasets"
 
-    # Fallback: REST API (original httpx-based downloader)
-    import httpx
-
-    items: list[GSM8KItem] = []
-    offset = 0
-    total = 0
-
-    with httpx.Client(timeout=30.0) as client:
-        while True:
-            url = (
-                f"{_HF_API_BASE}?dataset={_DATASET}"
-                f"&config={_CONFIG}&split={_SPLIT}"
-                f"&offset={offset}&length={_PAGE_SIZE}"
-            )
-            resp = client.get(url)
-            resp.raise_for_status()
-            try:
-                data = resp.json()
-            except Exception as exc:
-                raise RuntimeError(
-                    f"HuggingFace API returned non-JSON at offset {offset}: {exc}"
-                ) from exc
-
-            rows_data = data.get("rows", [])
-            if not rows_data:
-                break
-
-            total = data.get("num_rows_total", total)
-
-            for row_data in rows_data:
-                row = row_data["row"]
-                idx = row_data["row_idx"]
-                try:
-                    gt = _extract_ground_truth(row["answer"])
-                    items.append(
-                        GSM8KItem(
-                            index=idx,
-                            question=row["question"],
-                            raw_answer=row["answer"],
-                            ground_truth=gt,
-                        )
-                    )
-                except (ValueError, KeyError) as exc:
-                    logger.warning("Skipping row %d: %s", idx, exc)
-
-            offset += len(rows_data)
-            logger.debug("Downloaded %d / %d rows", offset, total)
-
-            if on_progress:
-                on_progress(offset, total)
-
-            if offset >= total:
-                break
-
-    return items, "rest_api"
+    # Fallback: REST API with retry/backoff and resume support
+    partial_path = _CACHE_DIR / "test.partial.jsonl"
+    rows = download_rows_paginated(
+        _DATASET,
+        _CONFIG,
+        _SPLIT,
+        page_size=_PAGE_SIZE,
+        partial_path=partial_path,
+        on_progress=on_progress,
+    )
+    return _rows_to_items(rows), "rest_api"
 
 
 def _load_from_cache(path: Path) -> list[GSM8KItem]:

@@ -367,49 +367,38 @@ class TestDatasetDownload:
     def test_rest_download_and_load_dataset_cache(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        import httpx
-
         from tool_eval_bench.plugins import hf_utils
         from tool_eval_bench.plugins.gsm8k import dataset as gsm
 
+        cache = tmp_path / "gsm8k" / "test.jsonl"
+        partial = tmp_path / "gsm8k" / "test.partial.jsonl"
+        monkeypatch.setattr(gsm, "_CACHE_DIR", cache.parent)
+        monkeypatch.setattr(gsm, "_CACHE_FILE", cache)
+        monkeypatch.setattr(gsm, "_find_cache_file", lambda: cache)
         monkeypatch.setattr(hf_utils, "load_via_datasets_lib", lambda *a, **k: None)
+        monkeypatch.setattr(
+            hf_utils,
+            "get_dataset_info",
+            lambda dataset, config: {"dataset_info": {"splits": {"test": {"num_examples": 2}}}},
+        )
+        monkeypatch.setattr(
+            hf_utils,
+            "_fetch_with_retry",
+            lambda url, **kw: {
+                "rows": [
+                    {"row_idx": 0, "row": {"question": "q", "answer": "work #### 2"}},
+                    {"row_idx": 1, "row": {"question": "bad", "answer": "none"}},
+                ]
+            },
+        )
 
-        class Response:
-            def raise_for_status(self) -> None:
-                return None
-
-            def json(self) -> dict[str, object]:
-                return {
-                    "num_rows_total": 2,
-                    "rows": [
-                        {"row_idx": 0, "row": {"question": "q", "answer": "work #### 2"}},
-                        {"row_idx": 1, "row": {"question": "bad", "answer": "none"}},
-                    ],
-                }
-
-        class Client:
-            def __init__(self, **kwargs: object) -> None:
-                pass
-
-            def __enter__(self) -> Client:
-                return self
-
-            def __exit__(self, *args: object) -> None:
-                return None
-
-            def get(self, url: str) -> Response:
-                return Response()
-
-        monkeypatch.setattr(httpx, "Client", Client)
         progress: list[tuple[int, int]] = []
         items, method = gsm._download_dataset(on_progress=lambda a, b: progress.append((a, b)))
         assert method == "rest_api"
         assert len(items) == 1 and items[0].ground_truth == 2
         assert progress == [(2, 2)]
+        assert partial.exists()
 
-        cache = tmp_path / "gsm8k" / "test.jsonl"
-        monkeypatch.setattr(gsm, "_CACHE_DIR", cache.parent)
-        monkeypatch.setattr(gsm, "_CACHE_FILE", cache)
-        monkeypatch.setattr(gsm, "_find_cache_file", lambda: cache)
         assert gsm.load_dataset(force_download=True)[0].ground_truth == 2
+        assert not partial.exists()
         assert gsm.load_dataset()[0].ground_truth == 2

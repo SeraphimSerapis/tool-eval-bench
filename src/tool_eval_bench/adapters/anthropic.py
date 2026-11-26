@@ -315,7 +315,10 @@ def _apply_extra_params(
             else:
                 payload[key] = value
         elif key in _REQUEST_ALIASES:
-            payload[_REQUEST_ALIASES[key]] = [value] if isinstance(value, str) else value
+            mapped = _REQUEST_ALIASES[key]
+            payload[mapped] = (
+                [value] if mapped == "stop_sequences" and isinstance(value, str) else value
+            )
         elif key in ("max_tokens", "max_completion_tokens"):
             payload["max_tokens"] = value
         elif key == "temperature":

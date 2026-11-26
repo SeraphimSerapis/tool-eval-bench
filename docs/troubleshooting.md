@@ -10,26 +10,36 @@ JSON output shape, see [cli-reference.md](cli-reference.md).
 ```bash
 tool-eval-bench probe
 tool-eval-bench probe --base-url http://localhost:8000
+tool-eval-bench probe --check-tools --base-url http://localhost:8000
+tool-eval-bench probe --check-tools --check-template --tokenizer /path/to/tokenizer.json --base-url http://localhost:8000
 ```
+
+Without `--check-tools` or `--check-template`, `probe` checks only the model
+listing and sends no chat-completion requests. Add `--check-tools` to send one
+tool-calling request and verify structured `tool_calls` parsing (printing
+server flag advice if raw markup leaks into `content`). Add `--check-template`
+to run four paired chat-template fidelity and special-token leak checks
+(`tool_replay` and `multi_turn`, each paired with a single-turn twin); pass
+`--tokenizer` to override local HuggingFace cache lookup for special tokens.
 
 Its exit code tells you where the problem is:
 
 | Exit | Meaning | Usual cause |
 |---|---|---|
-| 0 | Ready | |
-| 1 | Server not ready | Nothing listening, the process is still loading, or the model list returned an HTTP error |
-| 2 | No server found, or invalid arguments | Auto-discovery found nothing on localhost; pass `--base-url` |
+| 0 | Ready | Endpoint reached, and any requested `--check-tools` / `--check-template` checks passed |
+| 1 | Server not ready or probe check failed | Nothing listening, model still loading, HTTP error on model listing, or `--check-tools` / `--check-template` failed |
+| 2 | Invalid response, no server found, or invalid arguments | Endpoint answered with non-JSON (`invalid_response`, such as an HTML page or proxy redirect), auto-discovery found nothing on localhost, or flags are invalid |
 
 A scored run exits 2 for connection and HTTP errors and 3 when the server lists no models.
 
 ## The server is running but nothing is discovered
 
-Auto-discovery scans common localhost ports for a model-list response. It finds vLLM, llama.cpp,
-SGLang, LiteLLM, Ollama, and TGI on their defaults, and nothing else. Pass `--base-url` explicitly
-for a non-standard port, a remote host, or anything behind a proxy.
-
-llama.cpp is the common exception even locally: it may expose the model list at `/models` rather
-than `/v1/models`, so discovery can miss a server that is otherwise healthy.
+Auto-discovery scans common localhost ports for a JSON model-list response on
+`/v1/models`, falling back to `/models` on HTTP 404 (implemented in
+`cli/server.py`, covering llama.cpp builds that expose `/models`). It finds
+vLLM, llama.cpp, SGLang, LiteLLM, Ollama, and TGI on their defaults, and
+nothing else. Pass `--base-url` explicitly for a non-standard port, a remote
+host, or anything behind a proxy.
 
 ## Exit 3, or the wrong model gets benchmarked
 
@@ -73,8 +83,10 @@ tool-eval-bench run --backend-kwargs '{"max_tokens": 1024}'         # hard cap o
 ```
 
 `--no-think` changes both the latency and the tool-calling behavior you are measuring, so it is a
-diagnostic rather than a setting to keep. Scenarios that score provider-exposed reasoning, such as
-TC-88, cannot reach a pass without it.
+diagnostic rather than a setting to keep. TC-88 scores only visible values and records
+`reasoning_transport` separately (`observed`, `unconfirmed`, or `unavailable`), so disabling
+reasoning does not automatically cap TC-88, though models that rely on thinking may still miss the
+visible constraints.
 
 ### What the timeout bounds
 
@@ -108,6 +120,54 @@ trace line and no failure kind. Many `empty_turn` results on one model usually p
 template or reasoning parser dropping content, so check those before reading it as a judgement
 failure.
 
+### Raw tool markup leaked into `content` (`unparsed_tool_call`)
+
+When a server runs without its chat-template tool parser, the model emits native
+tool-call tags or JSON call objects inside `message.content` while `tool_calls`
+stays empty. The orchestrator detects raw JSON calls and parser-family markers
+including Hermes/Qwen (`<tool_call>`, `<|tool_call|>`), Qwen3-Coder
+(`<function=...>`), Mistral (`[TOOL_CALLS]`), Llama 3 (`<|python_tag|>`),
+DeepSeek (`<|tool_calls_begin|>`), and Gemma 4 (`<|tool_call>`, `<tool_call|>`,
+`<channel|>`, `<turn|>`, `call:<name>{...}`), records
+`failure_kind="unparsed_tool_call"`, and suggests the matching server flag, such
+as `--enable-auto-tool-choice --tool-call-parser gemma4` on vLLM,
+`--tool-call-parser gemma4` on SGLang, or `--jinja` on llama.cpp.
+
+Unlike transport errors, `unparsed_tool_call` results stay in the score
+denominator as 0 points so a missing server parser cannot shrink the graded set.
+Run `tool-eval-bench probe --check-tools --check-template` after updating your
+server flags to verify clean tool parsing before re-running the suite.
+
+### Degenerate repetition loops (`degenerate_loop`)
+
+When a model gets trapped repeating a 20-word phrase at least 3 times, an
+identical character run (120+ ordinary/whitespace characters, or 200+ rule/border
+characters), or a 2 to 4 character pattern 40+ times consecutively until hitting
+`max_tokens`, the orchestrator classifies the failure as `degenerate_loop`
+(`domain/loop_detection.py`) rather than `reasoning_truncated`. Raising
+`max_tokens` will not fix a degenerate loop; it only burns more tokens. Check
+quantization, sampling parameters (`--temperature`, `--repeat-penalty`,
+`--top-p`, `--min-p`), and the server's chat template instead.
+
+### Answer trapped in thinking (`answer_in_thinking`)
+
+A reasoning model can write its intended answer inside `reasoning` while
+returning empty visible `content`, or hit `finish_reason=length` with reasoning
+but no visible answer. The orchestrator counts these turns in
+`answer_in_thinking_turns` and `answer_in_thinking_scenarios` and records an
+`answer_in_thinking` diagnostic on the scenario. Frequent occurrences point to
+a reasoning parser mismatch, a chat template that fails to close the thinking
+block, or a token budget too small for the model's reasoning style.
+
+### Score shows as `Withheld`
+
+When every scenario in a run is excluded by infrastructure failures (`timeout`,
+`connection_error`, or `server_error`), `max_points` is 0. Rather than reporting
+a misleading 0 or 100, `tool-eval-bench` records `final_score: null` and
+`rating: "Withheld"`, excludes the run from leaderboard rankings, and emits a
+comparability warning. Inspect the per-scenario failure kinds and fix the
+underlying server reachability, timeout, or 429/5xx issue before re-running.
+
 ## Rate limits against a hosted endpoint
 
 Hosted APIs return 429s under sustained load. The runner already shares backoff across scenarios
@@ -121,20 +181,31 @@ anything else.
 
 ## A score moved and you do not know why
 
-Two runs are only comparable when their `config_fingerprint` matches. The fingerprint covers the
-code identity, the configuration, and the discovered deployment, so a changed flag, a different
-scenario selection, a new version, or a different engine or quantization changes it. The
-leaderboard collapses repeat runs of one model on it, and `history` will show you both runs'
-fingerprints.
+Check both `config_fingerprint` and the leaderboard cohort. Per-model
+`config_fingerprint` covers evaluation and operational flags, exact code
+identity (`tool_version` and `git_sha`), and discovered deployment facts
+(engine, quantization, context window, slots, speculative decoding). Repeat
+runs of one model collapse into a single leaderboard row only when the full
+`config_fingerprint` matches, and `history` shows both runs' fingerprints.
 
-Ranking across models uses a looser cohort: the settings plus the `tool-eval-bench` version and
-commit. A new version or commit therefore starts a new cohort with its own ranks. Deployment facts
-stay out of the cohort on purpose, because different models on one box often run at different
-quantizations or context windows; compare the engine columns in `export` yourself. A dirty
-development checkout carries a dated version suffix, so its runs start a new cohort each day.
+Cross-model leaderboard cohorts use rubric versioning: modern runs group on
+the shared evaluation config (excluding model identity, deployment facts,
+`concurrency`, `timeout_seconds`, and `alpha`) plus `eval_rubric_version`,
+`locale_version`, and `noise_version` from `domain/rubric.py`. Unrelated CLI or
+UI commits stay in the same cohort until a rubric version bumps; older rows
+without `eval_rubric_version` fall back to `tool_version` plus `git_sha`.
+Deployment facts stay out of cohorts on purpose because different models on one
+box often run at different quantizations or context windows; compare the engine
+columns in `export` yourself.
 
-Also check `completion_rate` on both. A run graded on 60 of 69 scenarios is not comparable to one
-graded on all 69, however similar the headline scores look.
+Conditions that affect comparability without splitting a cohort appear in
+`comparability_warnings` (in `leaderboard`, `compare`, and the Web Compare UI),
+including dirty git trees (`-dirty`), completion rates below 100%, withheld
+scores, subset limits, unprobed serving engines, `response_format` fallbacks,
+and cross-run rubric or tool version mismatches.
+
+Also check `completion_rate` on both runs. A run graded on 60 of 69 scenarios is
+not comparable to one graded on all 69, however similar the headline scores look.
 
 ## Backend-specific behavior
 

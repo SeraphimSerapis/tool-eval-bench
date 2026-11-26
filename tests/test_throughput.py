@@ -1020,3 +1020,135 @@ async def test_stream_one_max_tokens_retry_preserves_include_token_ids_and_none_
     assert len(seen_none) == 3
     assert "max_completion_tokens" in seen_none[-1]
     assert "return_token_ids" not in seen_none[-1]
+
+
+@pytest.mark.asyncio
+async def test_calibrate_switches_to_max_completion_tokens_on_400_retry() -> None:
+    from tool_eval_bench.runner.throughput import calibrate
+
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/tokenize"):
+            return httpx.Response(404)
+        body = json.loads(request.content)
+        seen.append(body)
+        if "max_tokens" in body:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Unsupported parameter: max_tokens. Use max_completion_tokens instead."
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 220, "completion_tokens": 1},
+            },
+        )
+
+    async with MeasurementTestClient(transport=httpx.MockTransport(handler)) as client:
+        cfg = await calibrate(client, "http://localhost:8000", "test-model")
+
+    assert len(seen) == 2
+    assert "max_tokens" in seen[0]
+    assert "max_completion_tokens" in seen[1] and "max_tokens" not in seen[1]
+    assert cfg.output_token_field == "max_completion_tokens"
+    assert cfg.calibration_confidence == "probe"
+
+
+@pytest.mark.asyncio
+async def test_stream_one_returns_error_sample_on_connection_failure_before_response() -> None:
+    from tool_eval_bench.runner.throughput import _stream_one
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    async with MeasurementTestClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await _stream_one(
+            client,
+            "http://localhost:8000/v1",
+            "test-model",
+            [{"role": "user", "content": "hi"}],
+            8,
+            None,
+        )
+
+    assert sample.error is not None
+    assert "connection refused" in sample.error
+    assert sample.total_ms >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_stream_one_logs_mtp_warning_once_per_tokenizer_config(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from tool_eval_bench.runner.throughput import _stream_one
+
+    handler, _ = _build_mtp_mock(tokens_per_chunk=3, num_chunks=2)
+    cfg = TokenizerConfig()
+
+    with caplog.at_level("INFO", logger="tool_eval_bench.runner.throughput"):
+        async with MeasurementTestClient(transport=httpx.MockTransport(handler)) as client:
+            first = await _stream_one(
+                client,
+                "http://localhost:8000/v1",
+                "test-model",
+                [{"role": "user", "content": "hi"}],
+                6,
+                None,
+                cfg,
+            )
+            second = await _stream_one(
+                client,
+                "http://localhost:8000/v1",
+                "test-model",
+                [{"role": "user", "content": "hi"}],
+                6,
+                None,
+                cfg,
+            )
+
+    assert first.mtp_chunks_detected is True
+    assert second.mtp_chunks_detected is True
+    assert cfg.mtp_warned is True
+    mtp_logs = [
+        rec for rec in caplog.records if "Multi-token prediction (MTP) detected" in rec.message
+    ]
+    assert len(mtp_logs) == 1
+
+
+@pytest.mark.asyncio
+async def test_tokenize_failure_falls_back_to_heuristic_filler_for_user_and_depth_prompts() -> None:
+    from tool_eval_bench.runner.throughput import _build_exact_prompt, _build_messages
+
+    # 1. When has_tokenize_endpoint is False, _build_exact_prompt uses heuristic directly.
+    heuristic_cfg = TokenizerConfig(has_tokenize_endpoint=False, chars_per_token=4.0)
+    direct = await _build_exact_prompt(
+        MagicAsyncClient(), "http://localhost:8000", "m", 25, None, heuristic_cfg
+    )
+    assert len(direct) == 100
+
+    # 2. When /tokenize raises a transport error, _tokenize_text returns None and both
+    #    depth system prompt and user prompt fall back to heuristic filler cleanly.
+    def failing_tokenize(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("tokenize endpoint unreachable")
+
+    tok_cfg = TokenizerConfig(has_tokenize_endpoint=True, chars_per_token=3.0)
+    async with MeasurementTestClient(transport=httpx.MockTransport(failing_tokenize)) as client:
+        messages = await _build_messages(
+            client,
+            "http://localhost:8000",
+            "m",
+            pp=40,
+            depth=20,
+            api_key=None,
+            tok_cfg=tok_cfg,
+        )
+
+    assert [m["role"] for m in messages] == ["system", "user"]
+    assert len(messages[0]["content"]) == 60
+    assert len(messages[1]["content"]) == 120

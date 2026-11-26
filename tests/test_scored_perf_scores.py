@@ -91,7 +91,7 @@ def _serve(monkeypatch: pytest.MonkeyPatch, runs: list[dict[str, Any]]) -> None:
 
     by_id = {run["run_id"]: run for run in runs}
 
-    def recent_runs(limit: int = 15) -> list[dict[str, Any]]:
+    def recent_runs(limit: int = 15, **_filters: Any) -> list[dict[str, Any]]:
         return copy.deepcopy(runs[:limit])
 
     def resolve_run(run_id: str) -> tuple[str, dict[str, Any]] | None:

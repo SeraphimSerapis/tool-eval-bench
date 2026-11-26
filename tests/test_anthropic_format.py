@@ -313,6 +313,21 @@ class TestExtraParams:
         _apply_extra_params(payload, headers, {"top_p": 0.9, "stop": "END", "max_tokens": 12})
         assert payload == {"top_p": 0.9, "stop_sequences": ["END"], "max_tokens": 12}
 
+    def test_only_stop_sequences_list_wraps_string_values(self) -> None:
+        payload: dict[str, Any] = {}
+        _apply_extra_params(
+            payload,
+            {},
+            {"top_p": "0.9", "top_k": "40", "stop": "HALT", "stop_sequences": "DONE"},
+        )
+        assert payload["top_p"] == "0.9"
+        assert payload["top_k"] == "40"
+        assert payload["stop_sequences"] == ["DONE"]
+
+        payload_list: dict[str, Any] = {}
+        _apply_extra_params(payload_list, {}, {"stop": ["A", "B"]})
+        assert payload_list["stop_sequences"] == ["A", "B"]
+
     def test_no_think_disables_thinking(self) -> None:
         payload: dict[str, Any] = {}
         _apply_extra_params(payload, {}, {"chat_template_kwargs": {"enable_thinking": False}})
@@ -730,7 +745,11 @@ class TestRequestBuilding:
         assert result.transport_error_status == 400
         assert "bad history" in result.content
 
-    def test_overloaded_is_retried(self) -> None:
+    def test_overloaded_is_retried(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tool_eval_bench.adapters import http_retry
+
+        monkeypatch.setattr(http_retry, "_backoff_delay", lambda *args: 0.0)
+
         def handler(request: httpx.Request, n: int) -> httpx.Response:
             if n == 1:
                 return httpx.Response(529, json={"error": {"type": "overloaded_error"}})
@@ -741,6 +760,91 @@ class TestRequestBuilding:
         result, seen = self._run(handler)
         assert result.content == "ok"
         assert len(seen) == 2
+
+    def test_response_format_maps_to_output_config_and_merges_extra_params(self) -> None:
+        def handler(request: httpx.Request, _n: int) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "content": [{"type": "text", "text": '{"ok": true}'}],
+                    "stop_reason": "end_turn",
+                },
+            )
+
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "answer",
+                "schema": {
+                    "type": "object",
+                    "properties": {"count": {"type": "integer", "minimum": 1}},
+                    "required": ["count"],
+                },
+            },
+        }
+        result, seen = self._run(
+            handler,
+            response_format=response_format,
+            extra_params={"output_config": {"effort": "low"}},
+        )
+        assert result.content == '{"ok": true}'
+        body = json.loads(seen[0].content)
+        assert body["output_config"] == {
+            "format": {
+                "type": "json_schema",
+                "schema": {
+                    "type": "object",
+                    "properties": {"count": {"type": "integer"}},
+                    "required": ["count"],
+                },
+            },
+            "effort": "low",
+        }
+
+    def test_sampling_rejected_endpoint_cache_hit_skips_400_on_second_call(self) -> None:
+        seen_bodies: list[dict[str, Any]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            seen_bodies.append(body)
+            if any(k in body for k in ("temperature", "top_p", "top_k")):
+                return httpx.Response(
+                    400,
+                    json={
+                        "type": "error",
+                        "error": {
+                            "type": "invalid_request_error",
+                            "message": "temperature is not supported",
+                        },
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"},
+            )
+
+        adapter = AnthropicAdapter()
+        adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))  # noqa: SLF001
+
+        async def _call_twice() -> None:
+            try:
+                for _ in range(2):
+                    res = await adapter.chat_completion(
+                        model="claude-opus-5",
+                        messages=[{"role": "user", "content": "hi"}],
+                        base_url=ZEN_URL,
+                        extra_params={"top_p": 0.9, "top_k": 20},
+                    )
+                    assert res.content == "ok"
+            finally:
+                await adapter.aclose()
+
+        asyncio.run(_call_twice())
+        # First call takes 2 requests (400 + retry); second call hits the cache and takes 1.
+        assert len(seen_bodies) == 3
+        assert "temperature" in seen_bodies[0]
+        for body in seen_bodies[1:]:
+            assert not ({"temperature", "top_p", "top_k"} & body.keys())
 
 
 class TestSamplingRetryPayload:
@@ -952,3 +1056,139 @@ async def test_anthropic_stream_signature_concat_input_preservation_and_refusal(
     )
     assert err_unstreamed.transport_error_status == 529
     assert err_unstreamed.transport_error_is_infrastructure is True
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_http_errors_and_sampling_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tool_eval_bench.adapters import http_retry
+
+    monkeypatch.setattr(http_retry, "_backoff_delay", lambda *args: 0.0)
+    seen_bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        mode = request.headers.get("x-mode", "")
+        body = json.loads(request.content)
+        seen_bodies.append(body)
+        if mode == "400":
+            return httpx.Response(400, json={"error": {"message": "bad prompt"}})
+        if mode == "sampling":
+            if "temperature" in body:
+                return httpx.Response(
+                    400, json={"error": {"message": "temperature is not supported"}}
+                )
+            sse = "\n".join(
+                _events(
+                    {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "text_delta", "text": "retried"},
+                    },
+                    {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+                )
+            )
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=sse)
+        return httpx.Response(500, text="internal server error")
+
+    for mode in ("400", "sampling", "500"):
+        adapter = AnthropicAdapter(max_retries=1, default_headers={"x-mode": mode})
+        adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))  # noqa: SLF001
+        try:
+            if mode == "400":
+                res = await adapter.chat_completion(
+                    model="claude",
+                    messages=[{"role": "user", "content": "hi"}],
+                    base_url=ZEN_URL,
+                    stream=True,
+                )
+                assert res.transport_error_status == 400
+                assert "bad prompt" in res.content
+            elif mode == "sampling":
+                res = await adapter.chat_completion(
+                    model="claude",
+                    messages=[{"role": "user", "content": "hi"}],
+                    base_url=ZEN_URL,
+                    stream=True,
+                )
+                assert res.content == "retried"
+            else:
+                with pytest.raises(httpx.HTTPStatusError):
+                    await adapter.chat_completion(
+                        model="claude",
+                        messages=[{"role": "user", "content": "hi"}],
+                        base_url=ZEN_URL,
+                        stream=True,
+                    )
+        finally:
+            await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_sse_edge_cases() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        mode = request.headers.get("x-mode", "")
+        if mode == "non-dict-json":
+            return httpx.Response(
+                200, headers={"content-type": "application/json"}, content=b"[1, 2]"
+            )
+        if mode == "empty-sse":
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, text=": keepalive\n\n"
+            )
+        if mode == "json-labeled-sse":
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text='{"content": [{"type": "text", "text": "plain-json"}], "stop_reason": "end_turn"}',
+            )
+        # Deltas arriving without prior content_block_start, plus non-dict tool JSON.
+        sse = "\n".join(
+            _events(
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "thinking_delta", "thinking": "thought"},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 1,
+                    "delta": {"type": "input_json_delta", "partial_json": "[1, 2]"},
+                },
+                {"type": "content_block_stop", "index": 1},
+                {
+                    "type": "content_block_delta",
+                    "index": 2,
+                    "delta": {"type": "text_delta", "text": "answer"},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 2,
+                    "delta": {"type": "unknown_delta", "x": 1},
+                },
+            )
+        )
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=sse)
+
+    for mode in ("non-dict-json", "empty-sse", "json-labeled-sse", "orphan-deltas"):
+        adapter = AnthropicAdapter(default_headers={"x-mode": mode})
+        adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))  # noqa: SLF001
+        try:
+            res = await adapter.chat_completion(
+                model="claude",
+                messages=[{"role": "user", "content": "hi"}],
+                base_url=ZEN_URL,
+                stream=True,
+            )
+            if mode in ("non-dict-json", "empty-sse"):
+                assert res.malformed is True
+            elif mode == "json-labeled-sse":
+                assert res.content == "plain-json"
+                assert res.malformed is False
+            else:
+                assert res.reasoning == "thought"
+                assert res.content == "answer"
+                assert len(res.tool_calls) == 1
+                assert res.tool_calls[0].arguments_str == "[1, 2]"
+        finally:
+            await adapter.aclose()

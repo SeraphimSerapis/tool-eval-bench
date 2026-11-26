@@ -8,6 +8,7 @@ the contract these pin.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -734,3 +735,293 @@ def test_failed_spec_bench_before_a_plugin_lets_the_plugin_decide(cli: Cli) -> N
         "Speculative decoding benchmark failed in 1 cell(s)."
     ]
     assert cli.runs == []
+
+
+# Plain progress, trial summaries, and BenchmarkService cleanup -----------------
+
+
+def _runner_args(**overrides: object) -> Any:
+    import argparse
+
+    values: dict[str, object] = {
+        "trials": 1,
+        "temperature": 0.0,
+        "timeout": 1.0,
+        "max_turns": 2,
+        "reference_date": None,
+        "seed": 1,
+        "parallel": 1,
+        "error_rate": 0.0,
+        "alpha": 0.7,
+        "weight_by_difficulty": False,
+        "json": False,
+        "no_live": True,
+        "json_file": None,
+        "diff": None,
+        "output_dir": None,
+        "resume": None,
+        "redact_url": False,
+        "fail_on_safety": False,
+    }
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+@pytest.mark.parametrize("parallel", [1, 4])
+def test_plain_progress_pairs_each_verdict_with_its_scenario(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], parallel: int
+) -> None:
+    """Parallel scenarios finish out of order; each line must still name its own result (#311)."""
+    import re
+
+    from rich.console import Console
+
+    from tool_eval_bench.domain.scenarios import (
+        Category,
+        ScenarioDefinition,
+        ScenarioEvaluation,
+        ScenarioResult,
+        ScenarioStatus,
+    )
+
+    scenarios = [
+        ScenarioDefinition(
+            id=f"TC-{n}",
+            title=f"title {n}",
+            category=Category.A,
+            user_message="x",
+            description="x",
+            handle_tool_call=lambda s, c: {},
+            evaluate=lambda s: ScenarioEvaluation(ScenarioStatus.PASS, 2, "ok"),
+        )
+        for n in (1, 2, 3)
+    ]
+
+    class Service:
+        async def run_benchmark(
+            self, *, concurrency, on_scenario_result, on_scenario_start=None, **kwargs
+        ):
+            total = len(scenarios)
+
+            def verdict(scenario):
+                return ScenarioResult(
+                    scenario.id, ScenarioStatus.PASS, 2, f"verdict for {scenario.id}"
+                )
+
+            if concurrency <= 1:
+                for idx, scenario in enumerate(scenarios):
+                    if on_scenario_start:
+                        await on_scenario_start(scenario, idx, total)
+                    await on_scenario_result(scenario, verdict(scenario), idx, total)
+            else:
+                if on_scenario_start:
+                    for idx, scenario in enumerate(scenarios):
+                        await on_scenario_start(scenario, idx, total)
+                for done, scenario in enumerate(reversed(scenarios)):
+                    await on_scenario_result(scenario, verdict(scenario), done, total)
+            return {"scores": {"final_score": 100, "rating": "Great"}}
+
+    monkeypatch.setattr(dispatch, "_resolve_scenarios", lambda args: scenarios)
+    dispatch._run_plain(
+        Service(),  # type: ignore[arg-type]
+        Console(),
+        "m",
+        "Display",
+        "vllm",
+        "url",
+        None,
+        _runner_args(parallel=parallel),
+    )
+
+    lines = [
+        re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
+        for line in capsys.readouterr().out.splitlines()
+        if "verdict for" in line
+    ]
+    order = ["TC-1", "TC-2", "TC-3"] if parallel == 1 else ["TC-3", "TC-2", "TC-1"]
+    assert lines == [
+        f"[{n}/3] {sid} title {sid[3:]}... ✅ PASS  (2/2) verdict for {sid}"
+        for n, sid in enumerate(order, start=1)
+    ]
+
+
+def test_dispatch_trial_summary_all_variance_branches() -> None:
+    from rich.console import Console
+
+    agg = {
+        "trials": 3,
+        "final_score_mean": 80,
+        "final_score_stddev": 2,
+        "final_score_ci95": (78, 82),
+        "final_score_median": 80,
+        "total_points_mean": 90,
+        "total_points_stddev": 1,
+        "pass_at_k": 90,
+        "pass_hat_k": 70,
+        "reliability_gap": 20,
+        "per_category": {"A": {"label": "Safety", "mean_percent": 80, "stddev_percent": 5}},
+        "per_scenario": {"TC-X": {"stddev": 1, "mean": 1, "points": [0, 1, 2]}},
+    }
+    console = Console(record=True)
+    dispatch._print_trials_summary(console, agg)
+    dispatch._print_trials_summary(console, {})
+    assert "unstable scenario" in console.export_text()
+
+
+def test_dispatch_live_and_plain_multitrial_write_held_out_summary_reports(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from rich.console import Console
+
+    from tool_eval_bench.domain.scenarios import (
+        Category,
+        ScenarioDefinition,
+        ScenarioEvaluation,
+        ScenarioResult,
+        ScenarioStatus,
+    )
+    from tool_eval_bench.storage import reports
+
+    scenario = ScenarioDefinition(
+        id="TC-X",
+        title="x",
+        category=Category.A,
+        user_message="x",
+        description="x",
+        handle_tool_call=lambda s, c: {},
+        evaluate=lambda s: ScenarioEvaluation(ScenarioStatus.PASS, 2, "ok"),
+        held_out=True,
+    )
+    sr = ScenarioResult("TC-X", ScenarioStatus.PASS, 2, "ok")
+    payload = {
+        "run_id": "r",
+        "report_path": str(tmp_path / "run.md"),
+        "scores": {"final_score": 100, "rating": "Great", "scenario_results": [sr.to_dict()]},
+    }
+
+    class Service:
+        async def run_benchmark(self, **kwargs):
+            return dict(payload)
+
+    class Display:
+        def __init__(self, *args, **kwargs):
+            self.results = {"TC-X": sr}
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        async def on_scenario_start(self, *args):
+            pass
+
+        async def on_scenario_result(self, *args):
+            pass
+
+        def on_rate_limit(self, status):
+            pass
+
+        def set_finished(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(dispatch, "BenchmarkDisplay", Display)
+    monkeypatch.setattr(dispatch, "_resolve_scenarios", lambda args: [scenario])
+    monkeypatch.setattr(dispatch, "_print_diff", lambda *args: None)
+    attestation = [{"name": "pack", "scenario_count": 1, "content_hash": "abc"}]
+    monkeypatch.setattr(dispatch, "_pack_attestations", lambda args: attestation)
+    summary_calls: list[dict] = []
+
+    def write_summary_report(*args, **kwargs):
+        summary_calls.append(kwargs)
+        return tmp_path / "summary.md"
+
+    monkeypatch.setattr(reports.MarkdownReporter, "write_summary_report", write_summary_report)
+    args = _runner_args(trials=2, diff="latest", output_dir=str(tmp_path))
+    console = Console(record=True)
+    dispatch._run_with_live_display(
+        Service(),  # type: ignore[arg-type]
+        console,
+        "m",
+        "Display",
+        "vllm",
+        "url",
+        None,
+        args,
+    )
+    dispatch._run_plain(
+        Service(),  # type: ignore[arg-type]
+        console,
+        "m",
+        "Display",
+        "vllm",
+        "url",
+        None,
+        args,
+    )
+    assert "Summary report" in console.export_text()
+    assert len(summary_calls) == 2
+    assert all(call["scenario_metadata"]["TC-X"].held_out for call in summary_calls)
+    assert all(call["scenario_packs"] == attestation for call in summary_calls)
+
+
+@pytest.mark.parametrize("kind", ["service_close", "repo_close", "no_close"])
+def test_run_scored_mode_closes_service_handle_even_on_early_exit(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """Bug 13a: _run_scored_mode must release the SQLite handle in a finally block."""
+    from rich.console import Console
+
+    closed: list[str] = []
+
+    class _ServiceWithClose:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def close(self) -> None:
+            closed.append("service")
+
+    class _Repo:
+        def close(self) -> None:
+            closed.append("repo")
+
+    class _ServiceWithRepoOnly:
+        def __init__(self, **_kwargs: Any) -> None:
+            self.repo = _Repo()
+
+    class _FakeServiceWithoutClose:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+    service_cls = {
+        "service_close": _ServiceWithClose,
+        "repo_close": _ServiceWithRepoOnly,
+        "no_close": _FakeServiceWithoutClose,
+    }[kind]
+
+    monkeypatch.setattr(dispatch, "BenchmarkService", service_cls)
+    monkeypatch.setattr(
+        dispatch, "_run_plain", lambda *_a, **_kw: (_ for _ in ()).throw(SystemExit(2))
+    )
+
+    target = dispatch._Target(
+        args=_runner_args(json=False, no_live=True),
+        parser=dispatch._make_parser(),
+        console=Console(record=True),
+        model="m",
+        display_name="m",
+        backend="vllm",
+        base_url="http://gpu.test:8000/v1",
+        display_url="http://gpu.test:8000/v1",
+        api_key=None,
+        wire_format="openai",
+        extra_params={},
+        run_context=None,
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        dispatch._run_scored_mode(target, [], None)
+
+    assert exc.value.code == 2
+    expected = {"service_close": ["service"], "repo_close": ["repo"], "no_close": []}[kind]
+    assert closed == expected

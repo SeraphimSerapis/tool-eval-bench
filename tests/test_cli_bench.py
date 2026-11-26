@@ -1,20 +1,16 @@
-"""Unit tests for cli/bench.py helper functions.
-
-These tests cover pure/helper functions in the CLI module that do not require
-a live inference server. They focus on argument parsing, scenario resolution,
-backend detection, and small output helpers.
-"""
+"""Unit tests for CLI helpers, scenario resolution, and plugin runner edge cases."""
 
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from rich.console import Console
 
-from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from tool_eval_bench.domain.scenarios import Category
 
 # ---------------------------------------------------------------------------
@@ -208,69 +204,7 @@ class TestScenarioSelectorDispatch:
 
 
 # ---------------------------------------------------------------------------
-# _detect_backend_from_response
-# ---------------------------------------------------------------------------
-
-
-class TestDetectBackendFromResponse:
-    def test_detects_vllm_from_server_header(self) -> None:
-        from tool_eval_bench.cli.server import (
-            detect_backend_from_response as _detect_backend_from_response,
-        )
-
-        resp = MagicMock()
-        resp.headers = {"server": "vllm"}
-        backend, label = _detect_backend_from_response(resp, 8000)
-        assert backend == "vllm"
-        assert label == "vLLM"
-
-    def test_detects_sglang_from_server_header(self) -> None:
-        from tool_eval_bench.cli.server import (
-            detect_backend_from_response as _detect_backend_from_response,
-        )
-
-        resp = MagicMock()
-        resp.headers = {"server": "sglang"}
-        backend, label = _detect_backend_from_response(resp, 8000)
-        assert backend == "sglang"
-        assert label == "SGLang"
-
-    def test_detects_llamacpp_from_server_header(self) -> None:
-        from tool_eval_bench.cli.server import (
-            detect_backend_from_response as _detect_backend_from_response,
-        )
-
-        resp = MagicMock()
-        resp.headers = {"server": "llama.cpp"}
-        backend, label = _detect_backend_from_response(resp, 8080)
-        assert backend == "llamacpp"
-        assert label == "llama.cpp"
-
-    def test_known_port_without_identity_stays_unknown(self) -> None:
-        from tool_eval_bench.cli.server import (
-            detect_backend_from_response as _detect_backend_from_response,
-        )
-
-        resp = MagicMock()
-        resp.headers = {}
-        backend, label = _detect_backend_from_response(resp, 4000)
-        assert backend == "unknown"
-        assert label == "inference server"
-
-    def test_falls_back_to_generic_for_unknown_port(self) -> None:
-        from tool_eval_bench.cli.server import (
-            detect_backend_from_response as _detect_backend_from_response,
-        )
-
-        resp = MagicMock()
-        resp.headers = {}
-        backend, label = _detect_backend_from_response(resp, 12345)
-        assert backend == "unknown"
-        assert label == "inference server"
-
-
-# ---------------------------------------------------------------------------
-# _parse_int_list
+# _parse_int_list / _parse_sweep_range / _with_config_fingerprint
 # ---------------------------------------------------------------------------
 
 
@@ -307,11 +241,6 @@ class TestParseIntList:
             _parse_int_list("1,abc,3")
 
 
-# ---------------------------------------------------------------------------
-# _parse_sweep_range
-# ---------------------------------------------------------------------------
-
-
 class TestParseSweepRange:
     def test_valid_range(self) -> None:
         from tool_eval_bench.cli.bench import _parse_sweep_range
@@ -345,28 +274,6 @@ class TestParseSweepRange:
             _parse_sweep_range("0.9-0.5")
 
 
-# ---------------------------------------------------------------------------
-# _redact_url
-# ---------------------------------------------------------------------------
-
-
-class TestRedactUrl:
-    def test_redacts_ipv4_host(self) -> None:
-        from tool_eval_bench.cli.bench import _redact_url
-
-        assert _redact_url("http://192.168.1.5:8080") == "http://***:8080"
-
-    def test_redacts_hostname(self) -> None:
-        from tool_eval_bench.cli.bench import _redact_url
-
-        assert _redact_url("http://my-server.local:8000") == "http://***:8000"
-
-
-# ---------------------------------------------------------------------------
-# _with_config_fingerprint
-# ---------------------------------------------------------------------------
-
-
 class TestWithConfigFingerprint:
     def test_adds_fingerprint(self) -> None:
         from tool_eval_bench.cli.bench import _with_config_fingerprint
@@ -384,119 +291,6 @@ class TestWithConfigFingerprint:
         fp1 = _with_config_fingerprint(config)["config_fingerprint"]
         fp2 = _with_config_fingerprint(config)["config_fingerprint"]
         assert fp1 == fp2
-
-
-# ---------------------------------------------------------------------------
-# _metadata_for_storage
-# ---------------------------------------------------------------------------
-
-
-class TestMetadataForStorage:
-    def test_calls_to_dict(self) -> None:
-        from tool_eval_bench.cli.bench import _metadata_for_storage
-
-        ctx = MagicMock()
-        ctx.to_dict.return_value = {"key": "value"}
-        assert _metadata_for_storage(ctx) == {"key": "value"}
-
-    def test_none_returns_empty(self) -> None:
-        from tool_eval_bench.cli.bench import _metadata_for_storage
-
-        assert _metadata_for_storage(None) == {}
-
-
-# ---------------------------------------------------------------------------
-# _headless_error
-# ---------------------------------------------------------------------------
-
-
-class TestHeadlessError:
-    def test_emits_jsonl_and_exits(self, capsys) -> None:
-        from tool_eval_bench.cli.bench import _headless_error
-
-        with pytest.raises(SystemExit) as exc_info:
-            _headless_error("NO_SERVER", "server not found", exit_code=3)
-
-        assert exc_info.value.code == 3
-        captured = capsys.readouterr()
-        event = json.loads(captured.err.strip())
-        assert event["event"] == "error"
-        assert event["error"] == "NO_SERVER"
-        assert event["message"] == "server not found"
-
-
-# ---------------------------------------------------------------------------
-# _make_parser
-# ---------------------------------------------------------------------------
-
-
-class TestMakeParser:
-    def test_parser_has_expected_flags(self) -> None:
-        from tool_eval_bench.cli.bench import _make_parser
-
-        parser = _make_parser()
-        args = parser.parse_args(["--model", "m", "--base-url", "http://localhost:8000"])
-        assert args.model == "m"
-        assert args.base_url == "http://localhost:8000"
-
-    def test_version_flag(self, capsys: pytest.CaptureFixture[str]) -> None:
-        from tool_eval_bench import __version__
-        from tool_eval_bench.cli.bench import _make_parser
-
-        parser = _make_parser()
-        with pytest.raises(SystemExit) as exc_info:
-            parser.parse_args(["--version"])
-
-        assert exc_info.value.code == 0
-        assert f"tool-eval-bench {__version__}" in capsys.readouterr().out
-
-    def test_defaults(self) -> None:
-        from tool_eval_bench.cli.bench import _make_parser
-
-        parser = _make_parser()
-        args = parser.parse_args([])
-        assert args.model is None
-        assert args.base_url is None
-        assert args.temperature == 0.0
-        assert args.timeout == DEFAULT_REQUEST_TIMEOUT_SECONDS
-        assert args.max_turns == 8
-        assert args.trials == 1
-        assert args.parallel == 1
-
-    def test_plugin_only_flags(self) -> None:
-        from tool_eval_bench.cli.bench import _make_parser
-
-        parser = _make_parser()
-        args = parser.parse_args(["--gsm8k-only", "--mmlu-only"])
-        assert args.gsm8k_only is True
-        assert args.mmlu_only is True
-
-    def test_hardmode_flags(self) -> None:
-        from tool_eval_bench.cli.bench import _make_parser
-
-        parser = _make_parser()
-        args = parser.parse_args(["--hardmode", "--hardmode-only"])
-        assert args.hardmode is True
-        assert args.hardmode_only is True
-
-    def test_backend_kwargs_parsed_as_string(self) -> None:
-        from tool_eval_bench.cli.bench import _make_parser
-
-        parser = _make_parser()
-        raw = '{"temperature": 0.5}'
-        args = parser.parse_args(["--backend-kwargs", raw])
-        assert args.backend_kwargs == raw
-
-    def test_compare_report_subcommand(self) -> None:
-        from tool_eval_bench.cli.bench import _make_parser
-
-        parser = _make_parser()
-        args = parser.parse_args(["compare-report", "a.md", "b.md", "-o", "out.html"])
-        assert args.command == "compare-report"
-        assert args.report_a == "a.md"
-        assert args.report_b == "b.md"
-        assert args.output == "out.html"
-        assert args.kind == "auto"
 
 
 # ---------------------------------------------------------------------------
@@ -534,46 +328,8 @@ class TestEmitJsonOutput:
 
 
 # ---------------------------------------------------------------------------
-# _persist_plugin_run
+# Trial aggregation helpers
 # ---------------------------------------------------------------------------
-
-
-class TestPersistPluginRun:
-    def test_persists_run(self) -> None:
-        from tool_eval_bench.cli.bench import _persist_plugin_run
-        from tool_eval_bench.storage.db import RunRepository
-
-        run_data = {
-            "run_id": "test-run-123",
-            "model": "test-model",
-            "benchmark_type": "gsm8k",
-            "final_score": 0.85,
-        }
-
-        with patch.object(RunRepository, "__enter__", autospec=True) as mock_enter:
-            mock_repo = MagicMock()
-            mock_enter.return_value = mock_repo
-            mock_enter.return_value.__exit__ = MagicMock(return_value=False)
-            # Need to patch __exit__ on the class as well so the context manager works
-            with patch.object(RunRepository, "__exit__", autospec=True) as mock_exit:
-                mock_exit.return_value = False
-                _persist_plugin_run(run_data)
-                mock_repo.upsert_scenario_run.assert_called_once_with(run_data)
-
-
-# ---------------------------------------------------------------------------
-# Argument validation / mutual exclusion smoke tests
-# ---------------------------------------------------------------------------
-
-
-class TestArgumentValidation:
-    def test_invalid_category_letter_allowed_at_parse_time(self) -> None:
-        """Categories are not validated at parse time; resolution handles mismatches."""
-        from tool_eval_bench.cli.bench import _make_parser
-
-        parser = _make_parser()
-        args = parser.parse_args(["--categories", "Z"])
-        assert args.categories == ["Z"]
 
 
 class TestBootstrapCI:
@@ -660,3 +416,212 @@ class TestPassAtKMetrics:
         assert agg["pass_at_k"] == round(100 * 2 / 3, 1)
         assert agg["pass_hat_k"] == round(100 * 1 / 3, 1)
         assert agg["reliability_gap"] == round(agg["pass_at_k"] - agg["pass_hat_k"], 1)
+
+
+# ---------------------------------------------------------------------------
+# Plugin runner edge cases (accuracy, needle, toolscale)
+# ---------------------------------------------------------------------------
+
+
+class TestPluginRunnerEdgeCases:
+    """Gap coverage for decomposed plugin runners under ``cli/plugin_*.py``."""
+
+    def test_mmlu_test_and_dev_load_failures_exit_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tool_eval_bench.cli import plugin_runners
+
+        args = argparse.Namespace(
+            mmlu_shots=5,
+            mmlu_limit=10,
+            mmlu_subjects=None,
+            seed=None,
+            parallel=1,
+            temperature=0.0,
+            timeout=10.0,
+            format=None,
+        )
+
+        # Test split load fails -> immediate exit 1
+        monkeypatch.setattr(plugin_runners, "load_dataset_with_progress", lambda *a, **k: None)
+        with pytest.raises(SystemExit) as exc:
+            plugin_runners._run_mmlu_benchmark(
+                Console(record=True), "m", "m", "http://h/v1", None, args
+            )
+        assert exc.value.code == 1
+
+        # Test split loads, dev split fails -> exit 1
+        calls = iter([[{"subject": "math"}], None])
+        monkeypatch.setattr(
+            plugin_runners, "load_dataset_with_progress", lambda *a, **k: next(calls)
+        )
+        with pytest.raises(SystemExit) as exc2:
+            plugin_runners._run_mmlu_benchmark(
+                Console(record=True), "m", "m", "http://h/v1", None, args
+            )
+        assert exc2.value.code == 1
+
+    def test_ifeval_dataset_load_failure_exits_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tool_eval_bench.cli import plugin_runners
+
+        args = argparse.Namespace(
+            ifeval_limit=5,
+            seed=None,
+            parallel=1,
+            temperature=0.0,
+            timeout=10.0,
+            format=None,
+        )
+        monkeypatch.setattr(plugin_runners, "load_dataset_with_progress", lambda *a, **k: None)
+        with pytest.raises(SystemExit) as exc:
+            plugin_runners._run_ifeval_benchmark(
+                Console(record=True), "m", "m", "http://h/v1", None, args
+            )
+        assert exc.value.code == 1
+
+    def test_needle_caps_context_window_to_kv_cache_capacity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tool_eval_bench.cli import plugin_runners
+        from tool_eval_bench.runner import context_pressure
+
+        async def fake_context(*_a: Any, **_kw: Any) -> int:
+            return 131_072
+
+        async def fake_kv(*_a: Any, **_kw: Any) -> Any:
+            return SimpleNamespace(capacity=32_768, is_hybrid=False)
+
+        monkeypatch.setattr(context_pressure, "detect_context_size", fake_context)
+        monkeypatch.setattr(context_pressure, "detect_kv_capacity", fake_kv)
+
+        console = Console(record=True, width=160)
+        args = argparse.Namespace(context_size=None, metrics_url=None)
+        resolved = plugin_runners._resolve_needle_context_size(
+            console, "http://h/v1", "m", None, args
+        )
+        assert resolved == 32_768
+        assert (
+            "KV cache capacity (32,768 tokens) < max_model_len (131,072)" in console.export_text()
+        )
+
+    def test_toolscale_warns_on_custom_catalog_lint_and_closes_adapter(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from tool_eval_bench.adapters import factory
+        from tool_eval_bench.cli import plugin_runners
+        from tool_eval_bench.plugins.toolscale import catalog as ts_catalog
+        from tool_eval_bench.plugins.toolscale import grid as ts_grid
+        from tool_eval_bench.plugins.toolscale.plugin import ToolscalePlugin
+
+        closed: list[bool] = []
+
+        class _FakeAdapter:
+            async def aclose(self) -> None:
+                closed.append(True)
+
+        fake_catalog = SimpleNamespace(
+            is_custom=True, version="custom", source="file", sha256="deadbeef"
+        )
+        fake_item = SimpleNamespace(
+            count=4,
+            similarity="near",
+            cue="literal",
+            density="sparse",
+            descriptions="terse",
+            target_rank=0,
+        )
+        fake_item_bare = SimpleNamespace(
+            count=4,
+            similarity="near",
+            cue="literal",
+            density="sparse",
+            descriptions="bare",
+            target_rank=0,
+        )
+
+        async def fake_run(self: Any, adapter: Any, *, on_progress: Any, **kwargs: Any) -> Any:
+            await on_progress(
+                1,
+                2,
+                {
+                    "count": 4,
+                    "similarity": "near",
+                    "cue": "literal",
+                    "density": "sparse",
+                    "descriptions": "terse",
+                    "correct": True,
+                    "outcome": "correct",
+                },
+            )
+            return SimpleNamespace(
+                score=100.0,
+                rating="★★★★★ Excellent",
+                duration_seconds=1.0,
+                total_tokens=42,
+                details={
+                    "total": 2,
+                    "grid_items": 2,
+                    "grid_called": 2,
+                    "grid_correct": 2,
+                    "grid_errors": 0,
+                    "accuracy": 100.0,
+                    "accuracy_when_called": 100.0,
+                    "call_rate": 100.0,
+                    "errors": 0,
+                    "counts": [4],
+                    "similarities": ["near"],
+                    "cues": ["literal"],
+                    "densities": ["sparse"],
+                    "descriptions": ["terse", "bare"],
+                    "cells": [
+                        {
+                            "count": 4,
+                            "similarity": "near",
+                            "cue": "literal",
+                            "density": "sparse",
+                            "descriptions": "terse",
+                            "accuracy_when_called": 100.0,
+                            "call_rate": 100.0,
+                        }
+                    ],
+                    "by_descriptions": {
+                        "terse": {"accuracy_when_called": 100.0, "call_rate": 100.0},
+                        "bare": {"accuracy_when_called": 50.0, "call_rate": 100.0},
+                    },
+                    "control": {"literal": {"accuracy": 100.0, "correct": 1, "items": 1}},
+                },
+            )
+
+        monkeypatch.setattr(ts_catalog, "load_catalog_file", lambda _p: fake_catalog)
+        monkeypatch.setattr(ts_catalog, "lint_catalog", lambda _c: ["duplicate name"])
+        monkeypatch.setattr(ts_grid, "build_items", lambda *_a, **_kw: [fake_item, fake_item_bare])
+        monkeypatch.setattr(factory, "build_adapter", lambda *_a, **_kw: _FakeAdapter())
+        monkeypatch.setattr(ToolscalePlugin, "run", fake_run)
+        monkeypatch.setattr(ToolscalePlugin, "render_report_section", lambda self, res: ["report"])
+        monkeypatch.setattr("tool_eval_bench.application.run_queries.persist_run", lambda _r: None)
+
+        args = argparse.Namespace(
+            seed=0,
+            trials=1,
+            toolscale_catalog=str(tmp_path / "custom.yaml"),
+            toolscale_limit=1,
+            toolscale_counts="4",
+            toolscale_similarity="near",
+            toolscale_cues="literal",
+            toolscale_fillers="sparse",
+            toolscale_descriptions="terse,bare",
+            parallel=1,
+            temperature=0.0,
+            timeout=10.0,
+            format=None,
+            label=None,
+        )
+        console = Console(record=True, width=160)
+        plugin_runners._run_toolscale_benchmark(
+            console, "m", "m", "http://h/v1", None, args, output_dir=str(tmp_path)
+        )
+
+        out = console.export_text()
+        assert "1 catalog lint finding(s)" in out
+        assert "Description effects compare against clean descriptions" in out
+        assert closed == [True]

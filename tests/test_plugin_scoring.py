@@ -800,3 +800,133 @@ async def test_gsm8k_parallel_task_crash_records_error_item_instead_of_dropping(
     assert err_item["is_error"] is True
     assert "pw" not in err_item["error"]
     assert "http://***:8000/v1" in err_item["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("plugin_name", ["gsm8k", "mmlu", "ifeval", "needle", "toolscale"])
+async def test_cancelled_error_propagates_at_concurrency_2(plugin_name: str) -> None:
+    """asyncio.CancelledError must propagate out of run() instead of becoming an error row."""
+    import asyncio
+
+    from tool_eval_bench.plugins.toolscale.catalog import load_builtin_catalog
+    from tool_eval_bench.plugins.toolscale.grid import build_items
+    from tool_eval_bench.plugins.toolscale.plugin import ToolscalePlugin
+
+    class _CancellingAdapter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat_completion(self, **kwargs: Any) -> ChatCompletionResult:
+            self.calls += 1
+            if self.calls == 2:
+                raise asyncio.CancelledError("user cancelled")
+            await asyncio.sleep(0)
+            return ChatCompletionResult(content="#### 1", finish_reason="stop")
+
+    adapter = _CancellingAdapter()
+    with pytest.raises(asyncio.CancelledError):
+        if plugin_name == "gsm8k":
+            await GSM8KPlugin().run(
+                adapter,
+                model="m",
+                base_url="http://x",
+                n_shots=0,
+                concurrency=2,
+                _preloaded_items=[
+                    GSM8KItem(0, "Q1?", "#### 1", 1.0),
+                    GSM8KItem(1, "Q2?", "#### 2", 2.0),
+                ],
+            )
+        elif plugin_name == "mmlu":
+            await MMLUPlugin().run(
+                adapter,
+                model="m",
+                base_url="http://x",
+                n_shots=0,
+                concurrency=2,
+                _preloaded_items={
+                    "test": [_mmlu_item(0, "anatomy"), _mmlu_item(1, "anatomy")],
+                    "dev": [],
+                },
+            )
+        elif plugin_name == "ifeval":
+            await IFEvalPlugin().run(
+                adapter,
+                model="m",
+                base_url="http://x",
+                concurrency=2,
+                _preloaded_items=_IFEVAL_ITEMS,
+            )
+        elif plugin_name == "needle":
+            await NeedlePlugin().run(
+                adapter,
+                model="m",
+                base_url="http://x",
+                concurrency=2,
+                cases=build_cases([1024], [0.0, 1.0], seed=1),
+            )
+        elif plugin_name == "toolscale":
+            catalog = load_builtin_catalog()
+            ts_items = build_items(
+                catalog, counts=[4], similarities=["distinct"], limit=2, trials=1, seed=1
+            )
+            await ToolscalePlugin().run(
+                adapter,
+                model="m",
+                base_url="http://x",
+                concurrency=2,
+                items=ts_items,
+                catalog=catalog,
+            )
+
+
+@pytest.mark.asyncio
+async def test_mmlu_builds_messages_lazily_inside_semaphore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MMLU must not materialize all prompts before acquiring a concurrency slot."""
+    import asyncio
+
+    from tool_eval_bench.plugins.mmlu import plugin as mmlu_plugin
+
+    orig_build = mmlu_plugin.build_messages
+    built_count = 0
+    first_in_flight = asyncio.Event()
+    release_first = asyncio.Event()
+
+    def tracking_build(*args: Any, **kwargs: Any) -> Any:
+        nonlocal built_count
+        built_count += 1
+        return orig_build(*args, **kwargs)
+
+    monkeypatch.setattr(mmlu_plugin, "build_messages", tracking_build)
+
+    class _PausingAdapter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat_completion(self, **kwargs: Any) -> ChatCompletionResult:
+            self.calls += 1
+            if self.calls == 1:
+                first_in_flight.set()
+                await release_first.wait()
+            return ChatCompletionResult(content="A", finish_reason="stop")
+
+    items = [_mmlu_item(i, "anatomy") for i in range(3)]
+    run_task = asyncio.create_task(
+        MMLUPlugin().run(
+            _PausingAdapter(),
+            model="m",
+            base_url="http://x",
+            n_shots=0,
+            concurrency=1,
+            _preloaded_items={"test": items, "dev": []},
+        )
+    )
+    await first_in_flight.wait()
+    await asyncio.sleep(0)
+    assert built_count == 1, f"expected 1 prompt built while slot 1 is busy, got {built_count}"
+    release_first.set()
+    result = await run_task
+    assert result.details["total"] == 3
+    assert built_count == 3

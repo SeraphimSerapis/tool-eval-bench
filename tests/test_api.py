@@ -843,3 +843,85 @@ class TestReferenceDateValidation:
                     reference_date="not-a-date",
                 )
             )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("bad_kwargs", "match"),
+    [
+        ({"model": ""}, "model must be a non-empty string"),
+        ({"model": "   "}, "model must be a non-empty string"),
+        ({"base_url": ""}, "base_url must be a non-empty string"),
+        ({"base_url": "ftp://localhost:8000"}, "base_url must use http or https"),
+        ({"base_url": "http:///v1"}, "base_url is missing a host"),
+        ({"backend": "not-a-real-backend"}, "Unsupported backend"),
+        ({"concurrency": 0}, "concurrency must be at least 1"),
+        ({"concurrency": -2}, "concurrency must be at least 1"),
+        ({"concurrency": False}, "concurrency must be an integer"),
+        ({"max_turns": True}, "max_turns must be an integer"),
+        ({"seed": True}, "seed must be an integer"),
+        ({"variant_seed": False}, "variant_seed must be an integer"),
+        ({"timeout_seconds": 0}, "timeout_seconds must be a finite number greater than 0"),
+        ({"timeout_seconds": -5.0}, "timeout_seconds must be a finite number greater than 0"),
+        (
+            {"timeout_seconds": float("nan")},
+            "timeout_seconds must be a finite number greater than 0",
+        ),
+        (
+            {"timeout_seconds": float("inf")},
+            "timeout_seconds must be a finite number greater than 0",
+        ),
+        ({"temperature": -0.1}, "temperature must be a finite number >= 0"),
+        ({"temperature": float("nan")}, "temperature must be a finite number >= 0"),
+        ({"temperature": float("inf")}, "temperature must be a finite number >= 0"),
+        ({"reference_date": "2026-3-5"}, "Invalid --reference-date"),
+        ({"decision_judge_model": "judge-m"}, "requires a base URL"),
+        ({"decision_judge": "recommended"}, "requires a base URL"),
+        (
+            {"decision_judge_base_url": "http://localhost:8090", "decision_judge_model": " "},
+            "requires a model",
+        ),
+        ({"locale": "klingon"}, "Unsupported locale"),
+        (
+            {"scenarios": "TC-01", "locale": "de"},
+            "None of the selected scenarios support --locale de",
+        ),
+    ],
+)
+async def test_api_run_benchmark_rejects_invalid_inputs_before_any_probe(
+    monkeypatch: pytest.MonkeyPatch, bad_kwargs: dict[str, object], match: str
+) -> None:
+    import httpx
+
+    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
+    from tool_eval_bench.utils import metadata
+
+    real_client = httpx.AsyncClient
+    tc01 = next(s for s in ALL_SCENARIOS if s.id == "TC-01")
+    tc02 = next(s for s in ALL_SCENARIOS if s.id == "TC-02")
+    seen_requests: list[httpx.Request] = []
+
+    def fail_on_network(request: httpx.Request) -> httpx.Response:
+        seen_requests.append(request)
+        return httpx.Response(500)
+
+    monkeypatch.setattr(
+        metadata.httpx,
+        "AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(fail_on_network), **kw),
+    )
+
+    overrides = dict(bad_kwargs)
+    if overrides.get("scenarios") == "TC-01":
+        overrides["scenarios"] = [tc01]
+
+    defaults: dict[str, object] = {
+        "model": "qwen",
+        "base_url": "http://localhost:8000",
+        "scenarios": [tc02],
+        "persist": False,
+    }
+    with pytest.raises(ValueError, match=match):
+        await run_benchmark(**{**defaults, **overrides})  # type: ignore[arg-type]
+
+    assert seen_requests == []

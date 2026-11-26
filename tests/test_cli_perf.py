@@ -1,8 +1,6 @@
-"""Deterministic coverage for performance CLI progress and spec-bench persistence."""
+"""Deterministic tests for llama-benchy CLI progress tracking and invocation."""
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 from rich.console import Console
@@ -11,8 +9,6 @@ from tool_eval_bench.cli.perf import (
     _BenchyProgressTracker,
     run_llama_benchy,
 )
-from tool_eval_bench.cli.spec_bench import run_spec_bench as run_spec_bench_cli
-from tool_eval_bench.runner.speculative import SpecDecodeSample
 from tool_eval_bench.runner.throughput import ThroughputSample
 
 
@@ -86,93 +82,6 @@ def test_llama_benchy_cli_success_and_unavailable(monkeypatch: pytest.MonkeyPatc
     assert "Incomplete" in output
     assert "\u2713 Complete" not in output
     assert "failed" in output
-
-
-@pytest.mark.usefixtures("no_dns")
-def test_spec_bench_cli_renders_metrics_and_persists(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    import tool_eval_bench.runner.speculative as speculative
-    from tool_eval_bench.application import mode_runs, run_queries
-
-    rich_sample = SpecDecodeSample(
-        pp_tokens=100,
-        tg_tokens=20,
-        depth=1024,
-        ttft_ms=10,
-        total_ms=110,
-        tg_tps=180,
-        acceptance_rate=0.7,
-        acceptance_length=3.5,
-        draft_tokens_delta=40,
-        accepted_tokens_delta=28,
-        num_drafts_delta=5,
-        baseline_tg_tps=100,
-        prompt_type="code",
-    )
-    low_sample = SpecDecodeSample(
-        tg_tokens=10,
-        total_ms=200,
-        acceptance_rate=0.2,
-        draft_tokens_delta=10,
-        accepted_tokens_delta=2,
-        num_drafts_delta=2,
-        baseline_tg_tps=100,
-        prompt_type="filler",
-    )
-    failed = SpecDecodeSample(error="failed", prompt_type="structured")
-
-    async def fake_run(*args: object, on_sample=None, **kwargs: object):
-        for idx, sample in enumerate((rich_sample, low_sample, failed)):
-            await on_sample(sample, idx, 3)
-        return [rich_sample, low_sample, failed]
-
-    report_path = tmp_path / "spec.md"
-    report_kwargs: list[dict] = []
-
-    def fake_report(root: object, run_id: object, report: object, run_context: object) -> object:
-        report_kwargs.append({"run_context": run_context})
-        return report_path
-
-    class _RunContext:
-        def to_dict(self) -> dict:
-            return {"context": self}
-
-    monkeypatch.setattr(speculative, "run_spec_bench", fake_run)
-    monkeypatch.setattr(mode_runs, "write_mode_report", fake_report)
-    monkeypatch.setattr(
-        mode_runs,
-        "with_config_fingerprint",
-        lambda config, *_: {**config, "config_fingerprint": "fp"},
-    )
-    persisted: list[dict] = []
-    monkeypatch.setattr(run_queries, "persist_run", persisted.append)
-    console = Console(record=True, width=160)
-    run_context = _RunContext()
-
-    result = run_spec_bench_cli(
-        console,
-        "model",
-        "Display",
-        "http://test/v1",
-        None,
-        pp=100,
-        tg=20,
-        depths=[1024],
-        baseline_tg_tps=100,
-        output_dir=str(tmp_path),
-        run_context=run_context,
-    )
-
-    output = console.export_text()
-    assert result == [rich_sample, low_sample, failed]
-    assert "Speculative Decoding Results" in output
-    assert "Highest acceptance" in output
-    assert "Consider reducing" in output
-    assert "failed" in output
-    assert persisted[0]["config"]["config_fingerprint"] == "fp"
-    assert persisted[0]["metadata"] == {"context": run_context}
-    assert report_kwargs[0]["run_context"] is run_context
 
 
 def test_benchy_progress_tracker_counts_measurement_runs_not_http_requests() -> None:

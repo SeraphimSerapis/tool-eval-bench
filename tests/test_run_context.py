@@ -712,3 +712,111 @@ class TestSystemPromptRunContext:
 
         assert ctx.system_prompt is None
         assert "system_prompt" not in ctx.to_dict()
+
+
+class TestScenarioReportBlankLinesAndMetadataOffload:
+    """Regressions for Bug 10 (report blank lines), Bug 12 (git timeout/offload), Perf 1 (lazy imports)."""
+
+    def test_scenario_report_preserves_blank_lines_for_diagnostics_and_toolset_deltas(
+        self, tmp_path
+    ):
+        from tool_eval_bench.domain.scenarios import (
+            Category,
+            CategoryScore,
+            ModelScoreSummary,
+            ScenarioResult,
+            ScenarioStatus,
+        )
+        from tool_eval_bench.storage.reports.scenario import write_scenario_report
+
+        summary = ModelScoreSummary(
+            scenario_results=[
+                ScenarioResult(
+                    "TC-88",
+                    ScenarioStatus.PASS,
+                    2,
+                    "Passed",
+                    raw_log="trace",
+                    diagnostics={"reasoning_transport": "observed"},
+                )
+            ],
+            category_scores=[CategoryScore(Category.P, "P Hard Mode", 2, 2, 100.0)],
+            final_score=100,
+            total_points=2,
+            max_points=2,
+            rating="★★★★★ Excellent",
+            toolset_deltas={"TC-37 vs TC-01": -1},
+        )
+        md = write_scenario_report(tmp_path, "run-spacing", "test-model", summary).read_text(
+            encoding="utf-8"
+        )
+        assert "# Tool-Call Benchmark — test-model\n\n- **Run ID**:" in md
+        assert (
+            "\n\n## Capability diagnostics\n\n"
+            "These observations do not change task-correctness points.\n\n"
+            "- TC-88: reasoning_transport = observed"
+        ) in md
+        assert (
+            "\n\n## Paired toolset results\n\n"
+            "Crowded-toolset points minus the matched control, on the 0 to 2 scale. "
+            "A single trial is not a calibrated difficulty estimate.\n\n"
+            "| Pair | Delta points |\n|---|---:|\n| TC-37 vs TC-01 | -1 |\n\n"
+            "- **Tool Definition Overhead**:"
+        ) in md
+
+    def test_git_sha_enforces_timeout_and_catches_timeout_expired(self, monkeypatch):
+        import subprocess
+
+        from tool_eval_bench.utils import metadata as metadata_module
+
+        timeouts: list[object] = []
+
+        def hanging_git(*args, **kwargs):
+            timeouts.append(kwargs.get("timeout"))
+            raise subprocess.TimeoutExpired(cmd="git", timeout=5)
+
+        monkeypatch.setattr(metadata_module.subprocess, "check_output", hanging_git)
+        assert metadata_module._git_sha() is None  # noqa: SLF001
+        assert timeouts == [5]
+
+    async def test_collect_run_context_offloads_git_sha_to_thread(self, monkeypatch):
+        import threading
+
+        from tool_eval_bench.utils import metadata as metadata_module
+
+        main_thread = threading.current_thread().ident
+        seen_threads: list[int | None] = []
+
+        def fake_git_sha() -> str:
+            seen_threads.append(threading.current_thread().ident)
+            return "deadbeef"
+
+        monkeypatch.setattr(metadata_module, "_git_sha", fake_git_sha)
+        ctx = await metadata_module.collect_run_context(
+            model="m",
+            backend="vllm",
+            base_url="http://localhost:8000",
+            probe_engine=False,
+        )
+        assert ctx.git_sha == "deadbeef"
+        assert seen_threads and seen_threads[0] != main_thread
+
+    def test_application_init_lazy_exports_and_domain_decision_constants(self):
+        import pytest
+
+        import tool_eval_bench.application as app_pkg
+        from tool_eval_bench.application import decision_audit
+        from tool_eval_bench.application.service import BenchmarkService
+        from tool_eval_bench.domain import decision as domain_decision
+
+        assert app_pkg.BenchmarkService is BenchmarkService
+        assert "BenchmarkService" in dir(app_pkg)
+        with pytest.raises(AttributeError):
+            _ = app_pkg.NonExistentSymbol  # type: ignore[attr-defined]
+
+        assert decision_audit.DECISION_JUDGE_SETS is domain_decision.DECISION_JUDGE_SETS
+        assert (
+            decision_audit.DEFAULT_DECISION_JUDGE_SET is domain_decision.DEFAULT_DECISION_JUDGE_SET
+        )
+        assert domain_decision.DECISION_JUDGE_SETS == ("recommended", "all")
+        assert domain_decision.DEFAULT_DECISION_JUDGE_SET == "recommended"

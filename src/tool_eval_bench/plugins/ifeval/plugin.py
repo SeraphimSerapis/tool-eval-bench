@@ -209,6 +209,9 @@ class IFEvalPlugin(BenchmarkPlugin):
 
         tasks = [eval_one(i, item) for i, item in enumerate(all_items)]
         gather_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for outcome in gather_results:
+            if isinstance(outcome, BaseException) and not isinstance(outcome, Exception):
+                raise outcome
         for i, exc in enumerate(gather_results):
             if isinstance(exc, BaseException):
                 logger.error("IFEval prompt %d crashed: %s", i, exc)

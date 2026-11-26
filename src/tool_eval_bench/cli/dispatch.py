@@ -1,81 +1,86 @@
-"""CLI dispatch and compatibility implementation for running benchmarks.
+"""CLI dispatch router and compatibility surface for running benchmarks.
 
 Defaults cascade:  .env file → TOOL_EVAL_* env vars → hardcoded fallbacks.
 With --provider NAME (or TOOL_EVAL_PROVIDER), the TOOL_EVAL_<NAME>_* triple
 replaces the generic base URL, API key, and model, so one .env can hold several
 endpoints for A/B runs.
 
-Usage:
-    tool-eval-bench                           # uses .env / env vars
-    tool-eval-bench --base-url URL            # override server
-    tool-eval-bench --provider gemini         # TOOL_EVAL_GEMINI_* from .env
-    tool-eval-bench --short                   # core 15 scenarios only
+Implementation of the focused phases lives in:
+  - ``cli.arg_validation``: flag normalization, range checks, scenario validation
+  - ``cli.session_setup``: endpoint discovery, target/reviewer setup, preflight, context pressure
+  - ``cli.perf_mode``: llama-benchy sweep planning, execution, persistence
+  - ``cli.resume_mode``: checkpoint recovery and config mismatch checks
+  - ``cli.scored_runners``: live Rich, headless JSON, and plain scenario runners
+  - ``cli.probe``: ``--probe`` reachability, tool-call wire, and chat-template checks
 
-The --model flag is optional: if omitted, the CLI will query the server's
-/v1/models endpoint and auto-select (1 model) or prompt the user (multiple).
+All extracted modules are imported eagerly at top level so test patchers that
+walk ``sys.modules`` reach every alias, and compatibility patch seams on
+``cli.dispatch`` (and ``cli.bench``) remain live through call-time forwarding.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
-import math
-import os
-import sqlite3
 import sys
-import time
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
-from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from dotenv import load_dotenv  # noqa: F401  (re-exported via _load_dotenv)
 from rich.console import Console
 from rich.markup import escape
-from rich.text import Text
 
-from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
-from tool_eval_bench.adapters.wire_format import resolve_wire_format as _resolve_wire_format
 from tool_eval_bench.application.decision_audit import (
-    check_decision_judge_url,
-    decision_judge_config,
     with_selected_checks,  # noqa: F401  (cli.bench name)
 )
-from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
-from tool_eval_bench.application.resume import prior_results_for_resume
 from tool_eval_bench.application.resume import (
-    result_requires_rerun as _resume_result_requires_rerun,
+    result_requires_rerun as _resume_result_requires_rerun,  # noqa: F401
 )
-from tool_eval_bench.application.reviewer import mask_credentials_in_adapter_logs, reviewer_origin
-from tool_eval_bench.application.run_config import (
-    RunSettings,  # noqa: F401  (cli.bench name)
-    build_run_config,
-    resume_mismatches,
-)
-from tool_eval_bench.application.run_context import build_run_context, identify_backend
+from tool_eval_bench.application.run_config import RunSettings  # noqa: F401  (cli.bench name)
+from tool_eval_bench.application.run_context import build_run_context
 from tool_eval_bench.application.run_queries import invocation_session
 from tool_eval_bench.application.service import BenchmarkService
-from tool_eval_bench.cli import model_probe as _model_probe
+from tool_eval_bench.cli import (
+    arg_validation as _arg_validation,
+)
+from tool_eval_bench.cli import (
+    model_probe as _model_probe,
+)
+from tool_eval_bench.cli import (
+    perf_mode as _perf_mode,
+)
+from tool_eval_bench.cli import (
+    probe as _probe_mod,
+)
+from tool_eval_bench.cli import (
+    resume_mode as _resume_mode,
+)
+from tool_eval_bench.cli import (
+    scored_runners as _scored_runners,
+)
+from tool_eval_bench.cli import (
+    session_setup as _session_setup,
+)
+from tool_eval_bench.cli.arg_validation import (
+    _build_extra_params,
+    _drop_unused_system_prompt,  # noqa: F401
+    _prepare_args,
+    _resolve_system_prompt,  # noqa: F401
+)
 from tool_eval_bench.cli.compare_report import (
     run_compare_report_command as _run_compare_report_command,
 )
-from tool_eval_bench.cli.display import BenchmarkDisplay, decision_audit_line
+from tool_eval_bench.cli.display import BenchmarkDisplay
 from tool_eval_bench.cli.headless import (
     HeadlessConsole,
     emit_run_failed,
     headless_usage_errors,
     json_logging,
-    report_run_failed,
-    report_run_saved,
 )
-from tool_eval_bench.cli.held_out import held_out_ids as _held_out_ids
-from tool_eval_bench.cli.held_out import redact_run as _redact_run
 from tool_eval_bench.cli.helpers import (
-    emit_headless_error as _headless_error,
+    emit_headless_error as _headless_error,  # noqa: F401
 )
 from tool_eval_bench.cli.helpers import (
     load_dotenv_file as _load_dotenv,
@@ -86,30 +91,24 @@ from tool_eval_bench.cli.helpers import (
 from tool_eval_bench.cli.helpers import (
     persist_plugin_run as _persist_plugin_run,  # noqa: F401  (cli.bench name)
 )
-from tool_eval_bench.cli.helpers import read_prompt_option
 from tool_eval_bench.cli.helpers import (
     safety_gate_failed as _safety_gate_failed,  # noqa: F401  (cli.bench name)
 )
-from tool_eval_bench.cli.helpers import trial_safety_warnings as _trial_safety_warnings
-from tool_eval_bench.cli.helpers import trials_safety_gate_failed as _trials_safety_gate_failed
 from tool_eval_bench.cli.history import compare_runs as _compare_runs
-from tool_eval_bench.cli.history import (
-    print_diff as _print_diff,
-)
+from tool_eval_bench.cli.history import print_diff as _print_diff
 from tool_eval_bench.cli.history import print_history as _print_history
 from tool_eval_bench.cli.leaderboard import export_runs as _export_runs
 from tool_eval_bench.cli.leaderboard import print_leaderboard as _print_leaderboard
 from tool_eval_bench.cli.legacy_parser import _make_parser  # noqa: F401
 from tool_eval_bench.cli.local_commands import handle_local_command as _handle_local_command
 from tool_eval_bench.cli.modes import any_plugin_selected as _any_plugin_selected
-from tool_eval_bench.cli.modes import mode_conflict as _mode_conflict
 from tool_eval_bench.cli.modes import sends_system_prompt as _sends_system_prompt
-from tool_eval_bench.cli.perf import (
-    PerfPassFailed,
-    _resolve_benchy_tokenizer,
-)
-from tool_eval_bench.cli.perf import (
-    run_llama_benchy as _run_llama_benchy,
+from tool_eval_bench.cli.perf import _resolve_benchy_tokenizer
+from tool_eval_bench.cli.perf import run_llama_benchy as _run_llama_benchy
+from tool_eval_bench.cli.perf_mode import (
+    _exit_if_throughput_failed,
+    _PerfSweep,  # noqa: F401
+    _throughput_config,  # noqa: F401
 )
 from tool_eval_bench.cli.plugin_runners import (
     _run_decision_benchmark,
@@ -119,9 +118,7 @@ from tool_eval_bench.cli.plugin_runners import (
     _run_needle_benchmark,
     _run_toolscale_benchmark,
 )
-from tool_eval_bench.cli.pressure import (
-    run_pressure_sweep as _run_pressure_sweep,
-)
+from tool_eval_bench.cli.pressure import run_pressure_sweep as _run_pressure_sweep
 from tool_eval_bench.cli.probe import (
     check_chat_template_fidelity as _check_chat_template_fidelity,
 )
@@ -130,94 +127,52 @@ from tool_eval_bench.cli.probe import (
 )
 from tool_eval_bench.cli.probe import preflight_model_check as _preflight_model_check
 from tool_eval_bench.cli.probe import warmup_server as _do_warmup
-from tool_eval_bench.cli.provider_env import resolve_provider as _resolve_provider
 from tool_eval_bench.cli.resolve import (
     parse_int_list as _parse_int_list,
 )
 from tool_eval_bench.cli.resolve import (
     parse_sweep_range as _parse_sweep_range,  # noqa: F401  (cli.bench name)
 )
+from tool_eval_bench.cli.resolve import redact_url as _redact_url  # noqa: F401
 from tool_eval_bench.cli.resolve import (
-    redact_url as _redact_url,
+    resolve_all_scenarios_for_ids as _resolve_all_scenarios_for_ids,  # noqa: F401
 )
-from tool_eval_bench.cli.resolve import (
-    resolve_all_scenarios_for_ids as _resolve_all_scenarios_for_ids,
-)
-from tool_eval_bench.cli.resolve import (
-    resolve_packs as _resolve_packs,
-)
-from tool_eval_bench.cli.resolve import (
-    resolve_scenarios as _resolve_scenarios,
-)
+from tool_eval_bench.cli.resolve import resolve_scenarios as _resolve_scenarios
 from tool_eval_bench.cli.resolve import (
     with_config_fingerprint as _with_config_fingerprint,  # noqa: F401  (cli.bench name)
 )
-from tool_eval_bench.cli.reviewer import (
-    build_reviewer_settings,
-    connection_api_key,
-    prepare_reviewer_args,
-    reviewer_requested,
-    same_server,
+from tool_eval_bench.cli.resume_mode import (
+    _load_resumable,
+    _resume_config_mismatches,  # noqa: F401
+    _resumed_session_id,
 )
 from tool_eval_bench.cli.run_io import aggregate_trials as _aggregate_trials
 from tool_eval_bench.cli.run_io import bootstrap_ci as _bootstrap_ci  # noqa: F401
 from tool_eval_bench.cli.run_io import emit_json_output as _emit_json_output
 from tool_eval_bench.cli.run_io import median as _median  # noqa: F401
-from tool_eval_bench.cli.run_io import stderr_progress_audit as _stderr_progress_audit
-from tool_eval_bench.cli.run_io import stderr_progress_result as _stderr_progress_result
-from tool_eval_bench.cli.run_io import stderr_progress_start as _stderr_progress_start
 from tool_eval_bench.cli.run_io import (
-    stderr_progress_start_unredacted as _stderr_progress_start_unredacted,
+    stderr_progress_result as _stderr_progress_result,  # noqa: F401
 )
-from tool_eval_bench.cli.scored_run import (
-    DECISION_JUDGE_API_KEY_ENV,
-    DECISION_JUDGE_BASE_URL_ENV,
-    DECISION_JUDGE_MODEL_ENV,
-    JudgeConnection,
-    ScoredRun,
+from tool_eval_bench.cli.run_io import (
+    stderr_progress_start as _stderr_progress_start,  # noqa: F401
 )
-from tool_eval_bench.cli.server import (
-    DISCOVERY_PORTS as _DISCOVERY_PORTS,
+from tool_eval_bench.cli.scored_run import JudgeConnection
+from tool_eval_bench.cli.scored_runners import (
+    _pack_attestations,
+    _plain_on_audit,  # noqa: F401
+    _plain_verdict,  # noqa: F401
+    _print_trials_summary,  # noqa: F401
+    _report_model_label,  # noqa: F401
 )
-from tool_eval_bench.cli.server import (
-    discover_server as _discover_server,
-)
-from tool_eval_bench.cli.spec_bench import (
-    load_spec_prompt_file,
-)
-from tool_eval_bench.cli.spec_bench import (
-    run_spec_bench as _run_spec_bench,
-)
-from tool_eval_bench.domain.errors import (
-    NO_SERVER,
-)
+from tool_eval_bench.cli.server import DISCOVERY_PORTS as _DISCOVERY_PORTS  # noqa: F401
+from tool_eval_bench.cli.server import discover_server as _discover_server
+from tool_eval_bench.cli.session_setup import _Endpoint, _PressureFill, _Target
+from tool_eval_bench.cli.spec_bench import load_spec_prompt_file
+from tool_eval_bench.cli.spec_bench import run_spec_bench as _run_spec_bench
 from tool_eval_bench.domain.models import ChatMessage, RunContext
-from tool_eval_bench.domain.review import CONVERSATION_KEYS, ReviewerSettings, without_auth_headers
-from tool_eval_bench.domain.scenarios import (
-    AuditPhase,
-    Category,
-    ModelScoreSummary,
-    ScenarioDefinition,
-    ScenarioResult,
-    ScenarioStatus,
-    scenario_report_metadata,
-)
-from tool_eval_bench.runner.perf_presets import (
-    DEFAULT_PERF_PRESET,
-    PerfPass,
-    PerfPlan,
-    depth0_speeds,
-    estimate_pass_seconds,
-    failed_cell_count,
-    format_duration,
-    plan_perf,
-)
+from tool_eval_bench.runner.perf_presets import plan_perf
 from tool_eval_bench.storage.reports import MarkdownReporter
 from tool_eval_bench.storage.reports.throughput import throughput_report
-from tool_eval_bench.utils.headers import attach_session_id as _attach_session_id
-from tool_eval_bench.utils.headers import merge_headers as _merge_headers
-from tool_eval_bench.utils.headers import parse_header_env as _parse_header_env
-from tool_eval_bench.utils.headers import parse_header_pairs as _parse_header_pairs
 from tool_eval_bench.utils.urls import redact_urls as _redact_urls
 
 if TYPE_CHECKING:
@@ -225,159 +180,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Valid category letters for --categories
-_VALID_CATEGORIES = {c.value for c in Category}
-
-
-def _resume_config_mismatches(
-    previous: dict[str, Any],
-    *,
-    model: str,
-    backend: str,
-    base_url: str,
-    scenarios: list[ScenarioDefinition],
-    args: argparse.Namespace,
-    extra_params: dict[str, Any] | None,
-    scenario_packs: list[dict[str, Any]] | None,
-    context_pressure: dict[str, Any] | None,
-    wire_format: str | None = None,
-) -> list[str]:
-    """Compare every user-controlled scoring condition persisted in a run.
-
-    The current config is built the way the service builds the one it stores,
-    so both sides share one schema and the comparison cannot drift from it.
-    ``wire_format`` is the run's ``--format`` choice; None detects it from
-    ``base_url``. It decides how the endpoint identity canonicalises the URL.
-    """
-    resolved_format = _resolve_wire_format(wire_format, base_url)
-    request = ScoredRun.from_args(
-        args,
-        model=model,
-        backend=backend,
-        base_url=base_url,
-        # Never reaches the stored config.
-        api_key=None,
-        wire_format=resolved_format,
-        scenarios=scenarios,
-        extra_params=extra_params,
-        scenario_packs=scenario_packs,
-        context_pressure_config=context_pressure,
-        # The caller's scenarios are the protocol being compared, whatever an
-        # earlier resume left on args.
-        resume_scenarios=scenarios,
-    )
-    # Metadata only feeds the fingerprint, which resume does not compare.
-    current = build_run_config(
-        request.run_settings(),
-        scenarios=request.config_scenarios(),
-        metadata={},
-        scenario_packs=scenario_packs,
-    )
-    return resume_mismatches(
-        previous,
-        current,
-        base_url=base_url,
-        judge_base_url=request.judge.base_url if request.judge else None,
-        wire_format=resolved_format,
-    )
-
-
-def _execution_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
-    """Return the explicit resume subset, including an intentionally empty one."""
-    subset = getattr(args, "_resume_remaining_scenarios", None)
-    return subset if subset is not None else _resolve_scenarios(args)
-
-
-def _score_stored_trial(
-    result: dict[str, Any], args: argparse.Namespace, scenarios: list[ScenarioDefinition]
-) -> ModelScoreSummary | None:
-    """Score one finished trial the way the service scored the row it stored.
-
-    Every runner's trial statistics go through here so they agree. The stored
-    results keep ``failure_kind``, so an infrastructure failure stays out of the
-    score as it does in the service. Each result is scored against its own
-    definition, which for a resumed run is the whole original protocol rather
-    than the rerun subset. ``scenarios`` are the definitions the trial executed;
-    they and the resume protocol take precedence over the registry, as in the
-    service. Returns None for a trial with no results.
-    """
-    from tool_eval_bench.runner.orchestrator import score_results
-
-    results = [
-        ScenarioResult.from_dict(data)
-        for data in result.get("scores", {}).get("scenario_results", [])
-    ]
-    if not results:
-        return None
-    known = {
-        scenario.id: scenario
-        for scenario in _resolve_all_scenarios_for_ids([r.scenario_id for r in results])
-    }
-    known.update({s.id: s for s in getattr(args, "_resume_scenarios", None) or []})
-    known.update({s.id: s for s in scenarios})
-    return score_results(
-        results,
-        [known[r.scenario_id] for r in results],
-        alpha=args.alpha,
-        weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
-    )
-
-
-def _resolve_diff_target(args: argparse.Namespace) -> None:
-    """Fix ``--diff``'s comparison run before the scored run starts.
-
-    The run being benchmarked is stored when it finishes, so resolving
-    ``latest`` afterwards would compare the run with itself. ``latest`` means
-    the newest completed tool-call run. Leaves ``args._diff_target`` (None when
-    there is nothing to compare against); ``--json`` has no console diff.
-    """
-    args._diff_target = None
-    diff = getattr(args, "diff", None)
-    if not diff:
-        return
-    if args.json:
-        logger.warning("--diff prints a console table and is ignored with --json")
-        return
-    if diff.lower() != "latest":
-        args._diff_target = diff
-        return
-    from tool_eval_bench.application.run_queries import resolve_run
-
-    try:
-        resolved = resolve_run(diff, run_type="tool_eval", status="completed")
-    except (sqlite3.Error, OSError) as exc:
-        # The diff is a convenience printed after the run; an unreadable
-        # history database must not stop the benchmark from starting.
-        logger.warning("--diff skipped: could not read previous runs (%s)", exc)
-        args.diff = None
-        return
-    args._diff_target = resolved[0] if resolved is not None else None
-
-
-def _show_diff(console: Console, results: list[ScenarioResult], args: argparse.Namespace) -> None:
-    """Print the ``--diff`` table against the run fixed by ``_resolve_diff_target``."""
-    if not getattr(args, "diff", None):
-        return
-    target = getattr(args, "_diff_target", None)
-    if target is None:
-        console.print("\n  [yellow]No previous runs found for comparison.[/]\n")
-        return
-    _print_diff(console, results, target)
-
-
-def _pack_attestations(args: Any) -> list[dict[str, Any]] | None:
-    """Content-hash records for any held-out packs in this run, or None.
-
-    Recorded in the run config so a published score can be tied to a specific
-    held-out set without publishing the set itself.
-    """
-    packs = _resolve_packs(args)
-    return [pack.to_dict() for pack in packs] or None
+# Set of argument dest names that are intentionally suppressed (not in ARGS_SCHEMA).
+# Used by the drift-detection test in tests/test_api.py.
+_HIDDEN_ARGS: frozenset[str] = frozenset({"command", "help"})
 
 
 # ---------------------------------------------------------------------------
-# Model auto-detection
+# Compatibility seam wrappers (preserving patch targets on cli.dispatch / cli.bench)
 # ---------------------------------------------------------------------------
+
+
+def _decision_judge_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    """The service's judge kwargs; kept as a ``cli.bench`` name, the runners use ``ScoredRun``."""
+    judge = JudgeConnection.from_args(args)
+    return judge.service_kwargs() if judge is not None else {}
 
 
 def _detect_model(
@@ -438,564 +254,38 @@ def _probe_server(
         _model_probe.asyncio = prior_asyncio
 
 
-# ---------------------------------------------------------------------------
-# Plain-text fallback (for --json or --no-live)
-# ---------------------------------------------------------------------------
-
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-RED = "\033[91m"
-BOLD = "\033[1m"
-DIM = "\033[2m"
-RESET = "\033[0m"
-
-STATUS_STYLE = {
-    ScenarioStatus.PASS: f"{GREEN}✅ PASS{RESET}",
-    ScenarioStatus.PARTIAL: f"{YELLOW}⚠️  PARTIAL{RESET}",
-    ScenarioStatus.FAIL: f"{RED}❌ FAIL{RESET}",
-}
-
-
-def _plain_verdict(result: ScenarioResult) -> str:
-    style = STATUS_STYLE.get(result.status, "?")
-    cap = (
-        " [turn cap]"
-        if result.turn_budget_exceeded and result.status != ScenarioStatus.PASS
-        else ""
-    )
-    return f"{style}  ({result.points}/2){cap} {DIM}{result.summary}{RESET}"
-
-
-async def _plain_on_start(scenario: ScenarioDefinition, idx: int, total: int) -> None:
-    print(
-        f"  {DIM}[{idx + 1}/{total}]{RESET} {scenario.id} {scenario.title}... ", end="", flush=True
+def _validate_explicit_scenarios(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    _arg_validation._validate_explicit_scenarios(
+        args, parser, resolve_scenarios_fn=_resolve_scenarios
     )
 
 
-async def _plain_on_result(
-    scenario: ScenarioDefinition, result: ScenarioResult, idx: int, total: int
-) -> None:
-    print(_plain_verdict(result))
+def _scenario_selector_label(args: argparse.Namespace) -> str:
+    return _arg_validation._scenario_selector_label(args, resolve_scenarios_fn=_resolve_scenarios)
 
 
-async def _plain_on_parallel_result(
-    scenario: ScenarioDefinition, result: ScenarioResult, done: int, total: int
-) -> None:
-    # Parallel scenarios finish out of start order, so a verdict appended to an
-    # open start line lands next to another scenario's title (#311). Print the
-    # whole line on completion instead; ``done`` counts finished scenarios.
-    print(
-        f"  {DIM}[{done + 1}/{total}]{RESET} {scenario.id} {scenario.title}... "
-        f"{_plain_verdict(result)}",
-        flush=True,
-    )
-
-
-async def _plain_on_audit(
-    scenario: ScenarioDefinition, result: ScenarioResult, phase: AuditPhase
-) -> None:
-    line = decision_audit_line(scenario.id, result, phase)
-    if line is not None:
-        print(line.plain, flush=True)
-
-
-# ---------------------------------------------------------------------------
-# Pre-flight model availability check (issue #19)
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# History and diff (extracted to cli/history.py)
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# GSM8K benchmark (--gsm8k / --gsm8k-only)
-# ---------------------------------------------------------------------------
-
-
-# Set of argument dest names that are intentionally suppressed (not in ARGS_SCHEMA).
-# Used by the drift-detection test in tests/test_api.py.
-_HIDDEN_ARGS: frozenset[str] = frozenset({"command", "help"})
-
-
-@dataclass
-class _Target:
-    """Everything the mode handlers below need about a resolved endpoint.
-
-    ``main`` resolves the endpoint once (URL cascade, wire format, backend
-    probe, model detection) and each mode reads it from here, rather than
-    threading a dozen locals through every branch.
-    """
-
-    args: argparse.Namespace
-    parser: argparse.ArgumentParser
-    console: Console
-    model: str
-    display_name: str
-    backend: str
-    base_url: str
-    display_url: str
-    api_key: str | None
-    wire_format: str
-    extra_params: dict[str, Any]
-    run_context: RunContext | None
-    #: What the throughput sweep ran, set by ``_run_throughput_mode``. Its
-    #: plan leaves out a skipped depth pass, so the stored config never claims
-    #: a grid that was not attempted.
-    perf_sweep: _PerfSweep | None = None
-
-
-def _benchy_extra_args(args: argparse.Namespace) -> list[str] | None:
-    if not args.benchy_args:
-        return None
-    import shlex
-
-    return shlex.split(args.benchy_args)
-
-
-def _stored_tokenizer(tokenizer: str | None) -> str | None:
-    """Reduce a local tokenizer path to its basename; keep a Hugging Face repo id.
-
-    A path can name the user's home directory or a private mount, and the
-    stored config is exported and shared. A repo id such as ``Qwen/Qwen3-8B``
-    identifies the tokenizer and carries no local detail.
-    """
-    if tokenizer is None:
-        return None
-    if tokenizer.startswith(("/", "./", "../", "~")) or os.path.exists(tokenizer):
-        return Path(tokenizer).name
-    return tokenizer
-
-
-def _perf_plan(target: _Target) -> PerfPlan:
-    """Resolve ``--perf-preset`` and any explicit workload flags into passes.
-
-    The served window comes from the run context; ``long`` drops the depths
-    that do not fit it. The plan is a pure function of the target, so the run
-    and the stored config always agree.
-    """
-    args = target.args
-    run_context = getattr(target, "run_context", None)
-    window = run_context.max_model_len if run_context is not None else None
-    return plan_perf(
-        getattr(args, "perf_preset", DEFAULT_PERF_PRESET),
-        pp=args.pp,
-        tg=args.tg,
-        runs=args.benchy_runs,
-        depths=None if args.depth is None else _parse_int_list(args.depth),
-        concurrency=None if args.concurrency is None else _parse_int_list(args.concurrency),
-        context_window=window if type(window) is int and window > 0 else None,
-    )
-
-
-def _throughput_config(target: _Target) -> dict[str, Any]:
-    """The stored config of a throughput run that no scored run carries.
-
-    The workload fields keep different sweeps out of one fingerprint cohort.
-    ``--benchy-args`` is stored with credentials stripped, because it can
-    carry ``--api-key``.
-
-    ``perf_preset`` is stored but not fingerprinted: the concrete grid already
-    is, and a short-preset run must keep the fingerprint it had before presets
-    existed. It reads ``custom`` when explicit flags changed the preset's grid.
-    ``passes`` appears only when the sweep ran more than one llama-benchy
-    invocation, because ``depths`` and ``concurrency`` alone would describe a
-    full cross product that never ran.
-    """
-    from tool_eval_bench.runner.llama_benchy import redact_arguments
-
-    args = target.args
-    plan = target.perf_sweep.plan if target.perf_sweep is not None else _perf_plan(target)
-    config: dict[str, Any] = {
-        "model": target.model,
-        "backend": target.backend,
-        "base_url": target.base_url,
-        "mode": "perf-only",
-        "pp": plan.pp,
-        "tg": plan.tg,
-        "depths": plan.depths,
-        "concurrency": plan.concurrency,
-        "runs": plan.runs,
-        "latency_mode": args.benchy_latency_mode,
-        # The tokenizer builds the prompts and counts their tokens.
-        "tokenizer": _stored_tokenizer(getattr(args, "tokenizer", None)),
-        "benchy_args": redact_arguments(_benchy_extra_args(args) or []),
-        "perf_preset": plan.stored_preset,
-    }
-    if len(plan.passes) > 1:
-        config["passes"] = _stored_passes(plan)
-    return config
-
-
-def _stored_passes(plan: PerfPlan) -> list[dict[str, Any]] | None:
-    """The ``passes`` a run config records, or None for a single-pass sweep."""
-    if len(plan.passes) < 2:
-        return None
-    return [perf_pass.to_config() for perf_pass in plan.passes]
-
-
-def _depth_list(depths: tuple[int, ...]) -> str:
-    """``depth 65,536`` or ``depths 65,536 and 131,072``."""
-    labels = [f"{depth:,}" for depth in depths]
-    if len(labels) == 1:
-        return f"depth {labels[0]}"
-    return f"depths {', '.join(labels[:-1])} and {labels[-1]}"
-
-
-def _announce_perf_plan(console: Console, plan: PerfPlan) -> None:
-    """Warn about cells the served window cannot hold, or that it could not check."""
-    if not plan.request_fits:
-        console.print(
-            f"  [yellow]⚠ pp {plan.pp:,} plus tg {plan.tg:,} does not fit the "
-            f"{plan.context_window:,}-token context window, so even depth-0 cells will fail.[/]"
-        )
-    if plan.preset != "long":
-        return
-    if plan.context_window is None:
-        console.print(
-            "  [yellow]⚠ The served context window is unknown, so the depth pass keeps "
-            f"every depth up to {max(plan.depths):,}. A depth that does not fit will fail.[/]"
-        )
-    elif plan.dropped_depths:
-        console.print(
-            f"  [dim]Skipping {_depth_list(plan.dropped_depths)} in the depth pass: depth plus "
-            f"pp and tg does not fit the {plan.context_window:,}-token context window.[/]"
-        )
-
-
-def _print_pass_estimate(
-    console: Console, plan: PerfPlan, perf_pass: PerfPass, samples: list[ThroughputSample]
-) -> None:
-    """Print a rough runtime estimate for *perf_pass* from the depth-0 speeds so far."""
-    speeds = depth0_speeds(samples)
-    if speeds is None:
-        console.print(
-            "  [dim]No single-stream depth-0 result, so no runtime estimate for the depth pass.[/]"
-        )
-        return
-    pp_tps, tg_tps = speeds
-    seconds = estimate_pass_seconds(
-        perf_pass, pp=plan.pp, tg=plan.tg, runs=plan.runs, pp_tps=pp_tps, tg_tps=tg_tps
-    )
-    console.print(
-        f"  [bold]⏱ Depth pass estimate: at least {format_duration(seconds)}.[/] "
-        f"[dim]{len(perf_pass.depths)} depths x {plan.runs + 1} runs each, the discarded "
-        f"warm-up included, at the depth-0 speeds of {pp_tps:,.0f} pp t/s and "
-        f"{tg_tps:,.1f} tg t/s. Both slow down as depth grows, so expect longer.[/]"
-    )
-
-
-def _unfinished_pass_samples(plan: PerfPlan, perf_pass: PerfPass) -> list[ThroughputSample]:
-    """One failed sample per cell of a pass that stopped without results.
-
-    The error names the cell and is fixed text rather than llama-benchy's,
-    because a failed cell's error is shown in reports and the exception text
-    can quote the server URL.
-    """
-    from tool_eval_bench.runner.throughput import ThroughputSample
-
-    return [
-        ThroughputSample(
-            pp_tokens=plan.pp,
-            tg_tokens=plan.tg,
-            depth=depth,
-            concurrency=level,
-            requested_pp=plan.pp,
-            requested_depth=depth,
-            calibration_confidence="llama-benchy",
-            error=(
-                f"pp{plan.pp} tg{plan.tg} @ d{depth} c{level}: not measured, "
-                "llama-benchy stopped before this cell finished"
-            ),
-        )
-        for depth in perf_pass.depths
-        for level in perf_pass.concurrency
-    ]
-
-
-@dataclass(frozen=True)
-class _PerfSweep:
-    """What :func:`_run_perf_plan` measured.
-
-    ``plan`` holds only the passes that ran, the one that failed included.
-    ``incomplete`` means a planned pass was skipped, failed, or interrupted;
-    ``interrupted`` means Ctrl+C stopped a later pass.
-    """
-
-    samples: list[ThroughputSample]
-    plan: PerfPlan
-    incomplete: bool = False
-    interrupted: bool = False
-
-    @property
-    def failed_cells(self) -> int:
-        return failed_cell_count(self.samples)
-
-
-def _perf_notice(console: Console, markup: str) -> None:
-    """Print a throughput warning, or log it under ``--json`` so stderr carries it.
-
-    A ``HeadlessConsole`` drops every print, and these warnings change what
-    the stored run means. ``json_logging`` turns the log record into a
-    ``log`` event with URLs redacted.
-    """
-    if isinstance(console, HeadlessConsole):
-        logger.warning("%s", " ".join(Text.from_markup(markup).plain.split()))
-    else:
-        console.print(markup)
-
-
-def _run_perf_plan(target: _Target, plan: PerfPlan) -> _PerfSweep:
-    """Run every pass of *plan* and return their samples as one list.
-
-    The depth pass is skipped when the first pass produced nothing usable: a
-    server that failed every depth-0 cell will not survive 128K of context.
-    A first pass that stops without results ends the CLI, as a single-pass
-    sweep always has. A later pass that stops keeps what came before: its
-    cells are counted as failed and the sweep is marked incomplete.
-    """
-    args, console = target.args, target.console
-    _announce_perf_plan(console, plan)
-    tokenizer = getattr(args, "tokenizer", None)
-    if len(plan.passes) > 1:
-        # Resolved once, so the tokenizer line is printed once, not per pass.
-        tokenizer = _resolve_benchy_tokenizer(
-            console, target.model, target.display_name, target.base_url, tokenizer
-        )
-    samples: list[ThroughputSample] = []
-    for index, perf_pass in enumerate(plan.passes):
-        if index > 0:
-            if not any(not sample.error for sample in samples):
-                _perf_notice(
-                    console,
-                    "  [yellow]Skipping the depth pass: the first pass has no successful cell.[/]",
-                )
-                return _PerfSweep(samples, plan.first_passes(index), incomplete=True)
-            _print_pass_estimate(console, plan, perf_pass, samples)
-        try:
-            samples.extend(
-                _run_llama_benchy(
-                    console,
-                    target.model,
-                    target.display_name,
-                    target.base_url,
-                    target.api_key,
-                    pp=[plan.pp],
-                    tg=[plan.tg],
-                    depths=list(perf_pass.depths),
-                    concurrency_levels=list(perf_pass.concurrency),
-                    runs=plan.runs,
-                    latency_mode=args.benchy_latency_mode,
-                    skip_coherence=True,
-                    extra_args=_benchy_extra_args(args),
-                    # llama-benchy always warms up, as llama-bench does: its global
-                    # warm-up requests plus a discarded first run of every cell. Its
-                    # --no-warmup drops both, so each cell's first measured run would
-                    # be cold. tool-eval-bench's --no-warmup covers only its own.
-                    skip_warmup=False,
-                    tokenizer=tokenizer,
-                    backend=target.backend,
-                    enable_prefix_caching=perf_pass.prefix_caching,
-                    title=f"pass {index + 1}/{len(plan.passes)}" if len(plan.passes) > 1 else None,
-                )
-            )
-        except PerfPassFailed as failure:
-            has_downstream = not args.perf_only and (
-                _scored_run_follows(args)
-                or args.spec_bench
-                or args.context_pressure_sweep is not None
-                or _any_plugin_selected(args)
-            )
-            if index == 0 and (failure.interrupted or not has_downstream):
-                report_run_failed(console, failure.markup)
-                sys.exit(1)
-            unfinished = _unfinished_pass_samples(plan, perf_pass)
-            # Ctrl+C is reported once the earlier passes are saved.
-            reason = "" if failure.interrupted else f"{failure.markup.strip()}\n"
-            if index == 0:
-                _perf_notice(
-                    console,
-                    f"{reason}  [yellow]⚠ Throughput pass stopped. Counting its "
-                    f"{len(unfinished)} cell(s) as failed and continuing.[/]",
-                )
-            else:
-                _perf_notice(
-                    console,
-                    f"{reason}  [yellow]⚠ Pass {index + 1} stopped. Keeping the earlier passes "
-                    f"and counting its {len(unfinished)} cell(s) as failed.[/]",
-                )
-            samples.extend(unfinished)
-            return _PerfSweep(
-                samples,
-                plan.first_passes(index + 1),
-                incomplete=True,
-                interrupted=failure.interrupted,
-            )
-    return _PerfSweep(samples, plan)
-
-
-def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
-    """Run the llama-benchy throughput sweep.
-
-    Returns the samples and whether the CLI is finished; ``--perf-only`` writes
-    its own report and stops, while ``--perf`` hands its samples to whatever
-    runs next. ``_run_cli`` persists them itself when no scored run follows.
-    A multi-pass preset still yields one sample list and one stored run.
-    Ctrl+C during a later pass saves the earlier passes on their own and
-    exits 1, whatever mode was meant to follow.
-
-    The sweep's stored preset, passes, and completeness are left on ``args``
-    for ``ScoredRun.from_args``, so a scored run records the plan that ran.
-    """
-    args = target.args
-    if not (args.perf or args.perf_only):
-        return [], False
-
-    sweep = _run_perf_plan(target, _perf_plan(target))
-    target.perf_sweep = sweep
-    args._perf_preset = sweep.plan.stored_preset
-    args._perf_passes = _stored_passes(sweep.plan)
-    args._perf_incomplete = sweep.incomplete
-    throughput_samples = sweep.samples
-
-    if sweep.interrupted:
-        _save_throughput(target, throughput_samples)
-        skipped = (
-            " The tool-call scenarios were not run."
-            if not args.perf_only and _scored_run_follows(args)
-            else ""
-        )
-        report_run_failed(
-            target.console,
-            f"[bold red]Interrupted.[/] The finished throughput passes are saved.{skipped}",
-        )
-        sys.exit(1)
-
-    if not args.perf_only:
-        if sweep.failed_cells and _scored_run_follows(args):
-            # The scored run keeps the status its scenarios earn; the sweep's
-            # failure is recorded beside it, so say so here.
-            state = ", the sweep is incomplete" if sweep.incomplete else ""
-            _perf_notice(
-                target.console,
-                f"  [yellow]⚠ Throughput: {sweep.failed_cells} cell(s) failed{state}. The scored "
-                "run records this under its throughput results.[/]",
-            )
-        # Failed cells too: the stored row counts them, and every report and
-        # display of the samples drops them itself.
-        return throughput_samples, False
-
-    _exit_if_throughput_failed(target, _save_throughput(target, throughput_samples))
-    return throughput_samples, True
-
-
-def _save_throughput(target: _Target, throughput_samples: list[ThroughputSample]) -> int:
-    """Persist a throughput sweep as its own ``perf`` run and return its failed-cell count.
-
-    Used by ``--perf-only`` and by ``--perf`` when no scored run follows to
-    carry the samples (spec-bench, a sweep, a plugin-only run, or
-    ``--skip-tool-eval``). Both store the same config, so the same measurement
-    lands in the same fingerprint cohort. The caller decides when a failed
-    cell ends the CLI; see :func:`_exit_if_throughput_failed`.
-
-    ``samples`` and ``successful`` count result rows, of which a prefix-cached
-    cell has two; ``failed`` counts grid cells, as every message does.
-    ``incomplete`` is present, and True, when a planned pass did not finish.
-    """
-    args, console = target.args, target.console
-    sweep = target.perf_sweep
-    failed_count = failed_cell_count(throughput_samples)
-    incomplete = sweep is not None and sweep.incomplete
-    successful_count = sum(not sample.error for sample in throughput_samples)
-    scores: dict[str, Any] = {"samples": len(throughput_samples)}
-    if failed_count:
-        scores.update({"successful": successful_count, "failed": failed_count})
-    if incomplete:
-        scores["incomplete"] = True
-    # Failed cells stay a count: their error text can quote the server URL.
-    scores["results"] = [sample.to_result() for sample in throughput_samples if not sample.error]
-    run_context = target.run_context
-    run = ModeRun(
-        run_type="perf",
-        config=_throughput_config(target),
-        scores=scores,
-        status="failed" if failed_count or incomplete else "completed",
-        unfingerprinted=("perf_preset",),
-    )
-    finalized = finalize_mode_run(
-        run,
-        throughput_report(
-            target.display_name,
-            throughput_samples,
-            label=args.label,
-            backend=target.backend,
-            # The same redacted form the run context stores, whatever --redact-url says.
-            server=_redact_url(target.base_url),
-            served_model=target.model,
-            model_root=run_context.server_model_root if run_context is not None else None,
-        ),
-        run_context=run_context,
-        output_dir=args.output_dir,
-    )
-    report_path = finalized.report_path
-    report_run_saved(console, run, finalized)
-    console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
-    return failed_count
-
-
-def _exit_if_throughput_failed(target: _Target, failed_count: int) -> None:
-    """Report a failed throughput sweep and exit 1; a no-op when every cell succeeded."""
-    if failed_count:
-        report_run_failed(
-            target.console,
-            f"[bold red]Throughput benchmark failed in {failed_count} cell(s).[/]",
-        )
-        sys.exit(1)
-
-
-def _reject_unknown_categories(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    invalid = {c.upper() for c in args.categories or []} - _VALID_CATEGORIES
-    if invalid:
-        parser.error(
-            f"Unknown categories: {', '.join(sorted(invalid))}. "
-            f"Valid: {', '.join(sorted(_VALID_CATEGORIES))}"
-        )
-
-
-def _validate_scenario_selection(
+def _resolve_endpoint(
     args: argparse.Namespace, parser: argparse.ArgumentParser, console: Console
-) -> None:
-    """Reject a bad pack or category before any request is made.
+) -> _Endpoint:
+    return _session_setup._resolve_endpoint(
+        args, parser, console, discover_server_fn=_discover_server
+    )
 
-    Packs load up front on purpose: a missing, empty, or colliding pack must
-    abort before the run starts rather than surface as a traceback partway
-    through scenario resolution.
-    """
-    try:
-        packs = _resolve_packs(args)
-        _resolve_scenarios(args)
-    except ValueError as exc:
-        parser.error(str(exc))
-    if packs and not args.json:
-        total = sum(len(p.scenarios) for p in packs)
-        names = ", ".join(f"{escape(p.name)} ({escape(p.content_hash)})" for p in packs)
-        console.print(f"  [dim]🔒 Held-out packs: {names} — {total} scenario(s)[/]")
 
-    if args.categories:
-        _reject_unknown_categories(args, parser)
-        cats = [c.upper() for c in args.categories]
-        from tool_eval_bench.domain.scenarios import CATEGORY_LABELS
-
-        cat_names = ", ".join(f"{c} ({CATEGORY_LABELS[Category(c)]})" for c in cats)
-        resolved_count = len(_resolve_scenarios(args))
-        if not args.json:
-            console.print(f"  [dim]📋 Categories: {cat_names} ({resolved_count} scenarios)[/]")
+def _resolve_target(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    console: Console,
+    endpoint: _Endpoint,
+) -> _Target:
+    return _session_setup._resolve_target(
+        args,
+        parser,
+        console,
+        endpoint,
+        detect_model_fn=_detect_model,
+        resolve_scenarios_fn=_resolve_scenarios,
+    )
 
 
 def _check_endpoint_ready(
@@ -1010,142 +300,19 @@ def _check_endpoint_ready(
     headers: Mapping[str, str] | None = None,
     display_url: str | None = None,
 ) -> None:
-    """Verify the model answers a real request, then warm the server.
-
-    Some servers list a model in ``/v1/models`` and still fail the first real
-    request.  Without this gate the benchmark scores the failure as the model's.
-    """
-    if not args.no_preflight:
-        _preflight_model_check(
-            console,
-            base_url,
-            model,
-            api_key,
-            headless=args.json,
-            wire_format=wire_format,
-            timeout_seconds=args.timeout,
-            temperature=args.temperature,
-            extra_params=extra_params or None,
-            headers=headers,
-            display_url=display_url,
-        )
-
-    if not args.no_warmup and not args.json:
-        _do_warmup(
-            console,
-            base_url,
-            model,
-            api_key,
-            wire_format=wire_format,
-            temperature=args.temperature,
-            extra_params=extra_params or None,
-            headers=headers,
-            display_url=display_url,
-        )
-
-
-def _decision_judge_kwargs(args: argparse.Namespace) -> dict[str, Any]:
-    """The service's judge kwargs; kept as a ``cli.bench`` name, the runners use ``ScoredRun``."""
-    judge = JudgeConnection.from_args(args)
-    return judge.service_kwargs() if judge is not None else {}
-
-
-def _judge_requested(args: argparse.Namespace) -> bool:
-    return any(
-        getattr(args, attr, None) is not None
-        for attr in ("decision_judge", "decision_judge_base_url", "decision_judge_model")
-    )
-
-
-def _apply_decision_judge_env(args: argparse.Namespace) -> None:
-    """Fill unset judge connection flags from ``TOOL_EVAL_DECISION_JUDGE_*``.
-
-    Only once a judge flag asks for a judge: like ``TOOL_EVAL_BASE_URL``, the
-    variables configure a connection and never switch audits on. A judge URL
-    in ``.env`` would otherwise reject every command that is not a scored run.
-    """
-    if not _judge_requested(args):
-        return
-    for attr, env in (
-        ("decision_judge_base_url", DECISION_JUDGE_BASE_URL_ENV),
-        ("decision_judge_model", DECISION_JUDGE_MODEL_ENV),
-    ):
-        if getattr(args, attr, None) is None:
-            setattr(args, attr, os.getenv(env) or None)
-
-
-def _detect_decision_judge_model(args: argparse.Namespace, console: Console) -> None:
-    """Ask the judge server for its model when no flag or env var named one.
-
-    A single served model is taken. Several open the interactive picker, and
-    stop a ``--json`` run rather than guess, since the judge model is recorded.
-    """
-    judge_url = getattr(args, "decision_judge_base_url", None)
-    if judge_url is None or getattr(args, "decision_judge_model", None) is not None:
-        return
-    # The judge host is masked wherever it is printed or stored.
-    display_url = _redact_url(judge_url)
-    if not args.json:
-        console.print(f"[dim]  Decision judge: {escape(display_url)}[/]")
-    model, _ = _detect_model(
-        judge_url,
-        os.environ.get(DECISION_JUDGE_API_KEY_ENV),
+    _session_setup._check_endpoint_ready(
+        args,
         console,
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        wire_format=wire_format,
+        extra_params=extra_params,
+        headers=headers,
         display_url=display_url,
-        headless=args.json,
-        multiple_models_hint=(
-            f"pass --decision-judge-model or set {DECISION_JUDGE_MODEL_ENV} to choose one"
-        ),
+        preflight_fn=_preflight_model_check,
+        warmup_fn=_do_warmup,
     )
-    args.decision_judge_model = model
-
-
-def _resolve_system_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    """Materialize ``--system-prompt-file`` into ``args.system_prompt``.
-
-    Downstream consumers (run modes, resume-compat check, RunContext) read only
-    ``args.system_prompt``, so the file variant is resolved once, right after
-    argument parsing, and both variants leave here in the canonical form that is
-    persisted and sent (see ``normalize_system_prompt``).
-    """
-    args.system_prompt = read_prompt_option(
-        getattr(args, "system_prompt", None),
-        getattr(args, "system_prompt_file", None),
-        inline_flag="--system-prompt",
-        file_flag="--system-prompt-file",
-        parser=parser,
-    )
-
-
-def _drop_unused_system_prompt(args: argparse.Namespace, console: Console) -> None:
-    """Ignore, with a warning, an override that no scenario would receive.
-
-    Left on the namespace it would be recorded in the run context and marked in
-    a report as if the model had been run under it.
-    """
-    if args.system_prompt is None or _sends_system_prompt(args):
-        return
-    message = (
-        "--system-prompt applies only to tool-call scenarios and is ignored: "
-        "this invocation runs none."
-    )
-    if args.json:
-        logger.warning(message)
-    else:
-        console.print(f"\n  [yellow]⚠ {message}[/]\n")
-    args.system_prompt = None
-
-
-def _scenario_selector_label(args: argparse.Namespace) -> str:
-    """Describe the scenario selection for the run report."""
-    resolved = _resolve_scenarios(args)
-    if args.scenarios:
-        return ", ".join(args.scenarios)
-    if args.categories:
-        return f"categories {', '.join(c.upper() for c in args.categories)} ({len(resolved)})"
-    if args.short:
-        return f"short ({len(resolved)})"
-    return f"all ({len(resolved)})"
 
 
 def _build_run_context(
@@ -1158,44 +325,208 @@ def _build_run_context(
     api_key: str | None,
     extra_params: dict[str, Any],
 ) -> RunContext | None:
-    """Collect execution-context metadata for the report.
-
-    Built before the mode branches so the throughput and spec-decode paths get
-    engine detection too.  Failure is not fatal: the run proceeds with a report
-    that lacks the context block.
-    """
-    run_context = asyncio.run(
-        build_run_context(
-            model=model,
-            backend=backend,
-            base_url=base_url,
-            api_key=api_key,
-            temperature=args.temperature,
-            max_turns=args.max_turns,
-            timeout_seconds=args.timeout,
-            seed=args.seed,
-            scenario_selector=_scenario_selector_label(args),
-            trials=max(1, args.trials),
-            parallel=args.parallel,
-            error_rate=args.error_rate,
-            extra_params=extra_params,
-            context_pressure=args.context_pressure,
-            system_prompt=getattr(args, "system_prompt", None),
-            label=args.label,
-            probe_engine=not args.no_probe_engine,
-        )
+    return _session_setup._build_run_context(
+        args,
+        console,
+        model=model,
+        backend=backend,
+        base_url=base_url,
+        api_key=api_key,
+        extra_params=extra_params,
+        build_run_context_fn=build_run_context,
+        scenario_selector_label_fn=_scenario_selector_label,
     )
-    if run_context is not None and not args.json and run_context.engine_name:
-        engine_str = run_context.engine_name
-        if run_context.engine_version:
-            engine_str += f" {run_context.engine_version}"
-        console.print(f"  [dim]🔍 Engine: {escape(engine_str)}[/]")
-    session_id = getattr(args, "_session_id", None)
-    if run_context is not None and session_id:
-        # Every mode persists ``run_context.to_dict()``, so this one field is
-        # what tags each stored row of the invocation with its session.
-        run_context = replace(run_context, session_id=session_id)
-    return run_context
+
+
+def _ready_target(target: _Target, probe_headers: Mapping[str, str]) -> _Target:
+    return _session_setup._ready_target(
+        target,
+        probe_headers,
+        check_endpoint_ready_fn=_check_endpoint_ready,
+        build_run_context_fn=_build_run_context,
+    )
+
+
+def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
+    return _session_setup._prepare_context_pressure(target, resolve_scenarios_fn=_resolve_scenarios)
+
+
+def _scored_run_follows(args: argparse.Namespace) -> bool:
+    """Whether a scored tool-call run follows the throughput sweep in ``_run_cli``.
+
+    A context-pressure sweep runs scenarios but stores its own runs, so it does
+    not carry ``--perf`` samples. ``tests/test_cli_dispatch_golden.py`` pins
+    this against the routing for every mode that ends the CLI early.
+    """
+    return _sends_system_prompt(args) and args.context_pressure_sweep is None
+
+
+def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
+    return _perf_mode._run_throughput_mode(
+        target,
+        resolve_tokenizer_fn=_resolve_benchy_tokenizer,
+        run_benchy_fn=_run_llama_benchy,
+        scored_run_follows_fn=_scored_run_follows,
+        throughput_report_fn=throughput_report,
+    )
+
+
+def _save_throughput(target: _Target, throughput_samples: list[ThroughputSample]) -> int:
+    return _perf_mode._save_throughput(
+        target, throughput_samples, throughput_report_fn=throughput_report
+    )
+
+
+def _plan_resume(target: _Target, pressure: _PressureFill | None) -> None:
+    _resume_mode._plan_resume(
+        target,
+        pressure,
+        resolve_scenarios_fn=_resolve_scenarios,
+        pack_attestations_fn=_pack_attestations,
+    )
+
+
+def _run_with_live_display(
+    service: BenchmarkService,
+    console: Console,
+    model: str,
+    display_name: str,
+    backend: str,
+    base_url: str,
+    api_key: str | None,
+    args: argparse.Namespace,
+    *,
+    throughput_samples: list | None = None,
+    extra_params: dict[str, Any] | None = None,
+    context_pressure_messages: list[ChatMessage] | None = None,
+    context_pressure_config: dict | None = None,
+    display_url: str | None = None,
+    run_context: Any | None = None,
+    wire_format: str = "openai",
+) -> None:
+    _scored_runners._run_with_live_display(
+        service,
+        console,
+        model,
+        display_name,
+        backend,
+        base_url,
+        api_key,
+        args,
+        throughput_samples=throughput_samples,
+        extra_params=extra_params,
+        context_pressure_messages=context_pressure_messages,
+        context_pressure_config=context_pressure_config,
+        display_url=display_url,
+        run_context=run_context,
+        wire_format=wire_format,
+        display_cls=BenchmarkDisplay,
+        reporter_cls=MarkdownReporter,
+        resolve_scenarios_fn=_resolve_scenarios,
+        pack_attestations_fn=_pack_attestations,
+        print_diff_fn=_print_diff,
+        aggregate_trials_fn=_aggregate_trials,
+    )
+
+
+def _run_json(
+    service: BenchmarkService,
+    model: str,
+    backend: str,
+    base_url: str,
+    api_key: str | None,
+    args: argparse.Namespace,
+    *,
+    throughput_samples: list | None = None,
+    extra_params: dict[str, Any] | None = None,
+    context_pressure_messages: list[ChatMessage] | None = None,
+    context_pressure_config: dict | None = None,
+    run_context: Any | None = None,
+    wire_format: str = "openai",
+) -> None:
+    _scored_runners._run_json(
+        service,
+        model,
+        backend,
+        base_url,
+        api_key,
+        args,
+        throughput_samples=throughput_samples,
+        extra_params=extra_params,
+        context_pressure_messages=context_pressure_messages,
+        context_pressure_config=context_pressure_config,
+        run_context=run_context,
+        wire_format=wire_format,
+        resolve_scenarios_fn=_resolve_scenarios,
+        pack_attestations_fn=_pack_attestations,
+        emit_json_output_fn=_emit_json_output,
+        aggregate_trials_fn=_aggregate_trials,
+    )
+
+
+def _run_plain(
+    service: BenchmarkService,
+    console: Console,
+    model: str,
+    display_name: str,
+    backend: str,
+    base_url: str,
+    api_key: str | None,
+    args: argparse.Namespace,
+    *,
+    throughput_samples: list | None = None,
+    extra_params: dict[str, Any] | None = None,
+    context_pressure_messages: list[ChatMessage] | None = None,
+    context_pressure_config: dict | None = None,
+    display_url: str | None = None,
+    run_context: Any | None = None,
+    wire_format: str = "openai",
+) -> None:
+    _scored_runners._run_plain(
+        service,
+        console,
+        model,
+        display_name,
+        backend,
+        base_url,
+        api_key,
+        args,
+        throughput_samples=throughput_samples,
+        extra_params=extra_params,
+        context_pressure_messages=context_pressure_messages,
+        context_pressure_config=context_pressure_config,
+        display_url=display_url,
+        run_context=run_context,
+        wire_format=wire_format,
+        reporter_cls=MarkdownReporter,
+        resolve_scenarios_fn=_resolve_scenarios,
+        pack_attestations_fn=_pack_attestations,
+        print_diff_fn=_print_diff,
+        aggregate_trials_fn=_aggregate_trials,
+    )
+
+
+def _run_scored_mode(
+    target: _Target,
+    throughput_samples: list[ThroughputSample],
+    pressure: _PressureFill | None,
+) -> None:
+    _scored_runners._run_scored_mode(
+        target,
+        throughput_samples,
+        pressure,
+        service_cls=BenchmarkService,
+        reporter_cls=MarkdownReporter,
+        plan_resume_fn=_plan_resume,
+        run_live_fn=_run_with_live_display,
+        run_json_fn=_run_json,
+        run_plain_fn=_run_plain,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Thin mode wrappers & top-level router
+# ---------------------------------------------------------------------------
 
 
 def _run_spec_bench_mode(target: _Target) -> bool:
@@ -1254,20 +585,17 @@ def _run_spec_bench_mode(target: _Target) -> bool:
 def _run_pressure_sweep_mode(target: _Target) -> bool:
     """Run the context-pressure sweep. Returns True when the CLI is done."""
     args, console = target.args, target.console
-    model, base_url, api_key = target.model, target.base_url, target.api_key
-    display_name, display_url = target.display_name, target.display_url
-    backend, extra_params = target.backend, target.extra_params
     if args.context_pressure_sweep is not None:
         _run_pressure_sweep(
             console,
-            model,
-            display_name,
-            backend,
-            base_url,
-            api_key,
+            target.model,
+            target.display_name,
+            target.backend,
+            target.base_url,
+            target.api_key,
             args,
-            display_url=display_url,
-            extra_params=extra_params or None,
+            display_url=target.display_url,
+            extra_params=target.extra_params or None,
             label=args.label,
             run_context=target.run_context,
         )
@@ -1275,25 +603,108 @@ def _run_pressure_sweep_mode(target: _Target) -> bool:
     return False
 
 
-@dataclass(frozen=True)
-class _Endpoint:
-    """The connection ``main`` resolved before a model is chosen."""
+def _run_spec_live_mode(target: _Target) -> None:
+    """``--spec-live``: standalone live monitor (exits after session)."""
+    args = target.args
+    from tool_eval_bench.cli.spec_live_display import run_spec_live
+    from tool_eval_bench.runner.spec_detection import canonical_spec_method_hint
 
-    base_url: str
-    api_key: str | None
-    backend: str
-    wire_format: str
-    model: str | None
-    # Pre-flight requests are single-shot conversations of their own.
-    probe_headers: Mapping[str, str]
+    spec_method_hint = canonical_spec_method_hint(args.spec_method)
+
+    try:
+        asyncio.run(
+            run_spec_live(
+                target.base_url,
+                api_key=target.api_key,
+                metrics_url=args.metrics_url,
+                model_name=target.display_name,
+                poll_interval=args.spec_live_interval,
+                spec_method=spec_method_hint,
+                redact_endpoint=args.redact_url,
+            )
+        )
+    except KeyboardInterrupt:
+        pass
 
 
-@dataclass(frozen=True)
-class _PressureFill:
-    """Context-pressure filler for the scored run, and the config it records."""
+def _run_decision_live_mode(target: _Target) -> None:
+    """``--decision-live``: standalone canary monitor (exits after session)."""
+    args = target.args
+    from tool_eval_bench.cli.decision_live_display import run_decision_live
+    from tool_eval_bench.cli.helpers import adapter_options
+    from tool_eval_bench.domain.decision import DecisionUnsupportedError
+    from tool_eval_bench.plugins.decision.typed_decisions import DatasetIntegrityError
 
-    messages: list[ChatMessage]
-    config: dict[str, Any]
+    try:
+        asyncio.run(
+            run_decision_live(
+                target.base_url,
+                model=target.model,
+                api_key=target.api_key,
+                metrics_url=args.metrics_url,
+                display_url=target.display_url,
+                interval=args.decision_live_interval,
+                timeout_seconds=args.timeout,
+                adapter_options=adapter_options(args),
+            )
+        )
+    except KeyboardInterrupt:
+        pass
+    except (DecisionUnsupportedError, DatasetIntegrityError) as exc:
+        detail = _redact_urls(str(exc)) if args.redact_url else str(exc)
+        target.console.print(f"\n[bold red]Decision monitor error:[/] {escape(detail)}")
+        sys.exit(1)
+
+
+def _run_plugins_mode(target: _Target) -> bool:
+    """Run the selected accuracy plugins. Returns True when the CLI is done."""
+    args = target.args
+    from tool_eval_bench.cli.plugin_runners import run_selected_plugins
+
+    return run_selected_plugins(
+        target.console,
+        target.model,
+        target.display_name,
+        target.base_url,
+        target.api_key,
+        args,
+        runners={
+            "gsm8k": _run_gsm8k_benchmark,
+            "mmlu": _run_mmlu_benchmark,
+            "ifeval": _run_ifeval_benchmark,
+            "needle": _run_needle_benchmark,
+            "toolscale": _run_toolscale_benchmark,
+            "decision": _run_decision_benchmark,
+        },
+        extra_params=target.extra_params or None,
+        output_dir=args.output_dir,
+        run_context=target.run_context,
+    )
+
+
+def _skip_tool_eval_mode(target: _Target) -> bool:
+    """``--skip-tool-eval``: stop before the scenarios. Returns True when the CLI is done."""
+    args = target.args
+    if not args.skip_tool_eval:
+        return False
+    any_benchmark = (
+        args.perf
+        or args.perf_only
+        or args.spec_bench
+        or args.spec_live
+        or _any_plugin_selected(args)
+    )
+    if not any_benchmark:
+        message = (
+            "--skip-tool-eval has no effect without "
+            "--perf, --perf-only, --spec-bench, --gsm8k, --mmlu, --ifeval, "
+            "--needle, --toolscale, or --decision-bench."
+        )
+        if args.json:
+            logger.warning(message)
+        else:
+            target.console.print(f"\n  [yellow]⚠ {message}[/]\n")
+    return True
 
 
 def main() -> None:
@@ -1367,7 +778,17 @@ def _run_session(
     """Run the benchmark modes of one invocation; ``_run_cli`` sets up its session."""
     endpoint = _resolve_endpoint(args, parser, console)
     if args.probe:
-        _run_probe_mode(args, console, endpoint, parser=parser)
+        _probe_mod.run_probe_mode(
+            args,
+            console,
+            endpoint,
+            parser=parser,
+            probe_server_fn=_probe_server,
+            build_extra_params_fn=_build_extra_params,
+            asyncio_mod=asyncio,
+            check_tool_call_fn=_check_tool_call_wire_parsing,
+            check_template_fn=_check_chat_template_fidelity,
+        )
         return
 
     target = _resolve_target(args, parser, console, endpoint)
@@ -1416,1634 +837,6 @@ def _run_session(
         _exit_if_throughput_failed(target, perf_failed_count)
         return
     _run_scored_mode(target, throughput_samples, pressure)
-
-
-def _scored_run_follows(args: argparse.Namespace) -> bool:
-    """Whether a scored tool-call run follows the throughput sweep in ``_run_cli``.
-
-    A context-pressure sweep runs scenarios but stores its own runs, so it does
-    not carry ``--perf`` samples. ``tests/test_cli_dispatch_golden.py`` pins
-    this against the routing for every mode that ends the CLI early.
-    """
-    return _sends_system_prompt(args) and args.context_pressure_sweep is None
-
-
-def _prepare_args(
-    args: argparse.Namespace, parser: argparse.ArgumentParser, console: Console
-) -> None:
-    """Normalize the parsed flags that every later step reads."""
-    # --json-file implies --json
-    if args.json_file:
-        args.json = True
-    if args.json and (args.spec_live or args.decision_live):
-        flag = "--spec-live" if args.spec_live else "--decision-live"
-        parser.error(f"{flag} is an interactive monitor and cannot be combined with --json")
-    conflict = _mode_conflict(args)
-    if conflict is not None:
-        parser.error(conflict)
-
-    # Resolve the system-prompt override from its file, if given, so every
-    # downstream consumer (run, resume-compat check, RunContext) sees plain
-    # text on args.system_prompt.
-    _resolve_system_prompt(args, parser)
-    _drop_unused_system_prompt(args, console)
-    _validate_run_ranges(args, parser)
-    _apply_decision_judge_env(args)
-    judge_url = getattr(args, "decision_judge_base_url", None)
-    judge_model = getattr(args, "decision_judge_model", None)
-    try:
-        if _judge_requested(args) and judge_url is None:
-            raise ValueError(
-                "A decision judge requires --decision-judge-base-url or "
-                f"{DECISION_JUDGE_BASE_URL_ENV}"
-            )
-        if judge_url is not None and judge_model is None:
-            # _resolve_target asks this URL for the model, so check it first.
-            check_decision_judge_url(judge_url)
-        else:
-            decision_judge_config(
-                judge_url, judge_model, judge_set=getattr(args, "decision_judge", None)
-            )
-    except ValueError as exc:
-        parser.error(str(exc))
-    if judge_url is not None and (
-        getattr(args, "command", None) not in {None, "run", "resume"}
-        or not _sends_system_prompt(args)
-        or args.context_pressure_sweep is not None
-    ):
-        parser.error("Decision judge audits require a run or resume of tool-call scenarios")
-    prepare_reviewer_args(args, parser)
-    if reviewer_requested(args):
-        if (
-            getattr(args, "command", None) not in {None, "run", "resume"}
-            or not _sends_system_prompt(args)
-            or args.context_pressure_sweep is not None
-            or getattr(args, "probe", False)
-            or _runs_a_storage_command(args)
-        ):
-            parser.error("A reviewer requires a run or resume of tool-call scenarios")
-        if getattr(args, "scenario_pack", None):
-            parser.error(
-                "A reviewer cannot be combined with --scenario-pack: it would receive "
-                "the held-out scenarios"
-            )
-        # Checked here, before any request: the flags alone decide it.
-        replaced = sorted(CONVERSATION_KEYS & _build_extra_params(args, parser).keys())
-        if replaced:
-            parser.error(
-                f"--backend-kwargs {', '.join(replaced)} replaces the conversation, which "
-                "would drop the reviewer's revision requests"
-            )
-    if args.resume and (not _sends_system_prompt(args) or args.context_pressure_sweep is not None):
-        parser.error("--resume requires a run of tool-call scenarios")
-    if getattr(args, "check_tools", False) and not args.probe:
-        parser.error("--check-tools requires probe or --probe")
-    if getattr(args, "check_template", False) and not args.probe:
-        parser.error("--check-template requires probe or --probe")
-    if getattr(args, "retest_diffs", False) and not getattr(args, "compare", None):
-        parser.error("--retest-diffs requires compare <left> <right> or --compare RUN_A RUN_B")
-    for retest_flag, retest_attr in (
-        ("--base-url-a", "base_url_a"),
-        ("--base-url-b", "base_url_b"),
-        ("--api-key-a", "api_key_a"),
-        ("--api-key-b", "api_key_b"),
-    ):
-        if getattr(args, retest_attr, None) is not None and not getattr(
-            args, "retest_diffs", False
-        ):
-            parser.error(f"{retest_flag} requires --retest-diffs")
-    # The service applies the same rule, but only after preflight, warm-up, and
-    # any perf sweep. The original string is kept: it is stored and fingerprinted.
-    if args.reference_date:
-        try:
-            if len(args.reference_date) != 10:
-                raise ValueError("not YYYY-MM-DD")
-            datetime.strptime(args.reference_date, "%Y-%m-%d")
-        except ValueError:
-            parser.error(
-                f"Invalid --reference-date '{args.reference_date}'. "
-                "Expected format: YYYY-MM-DD (e.g. 2026-03-20)"
-            )
-
-
-def _validate_run_ranges(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    """Reject out-of-range run settings before any request.
-
-    Checked here rather than with an argparse ``type=`` so ``--json`` reports
-    them as ``invalid_arguments``. ``0 <= x <= 1`` also rejects NaN.
-    """
-    for flag, attr, minimum in (
-        ("--max-turns", "max_turns", 1),
-        ("--trials", "trials", 1),
-        ("--spec-runs", "spec_runs", 1),
-        ("--benchy-runs", "benchy_runs", 1),
-        ("--pp", "pp", 1),
-        ("--tg", "tg", 1),
-        ("--context-size", "context_size", 1),
-        ("--sweep-steps", "sweep_steps", 2),
-        ("--needle-depths", "needle_depths", 1),
-        ("--needle-lengths", "needle_lengths", 1),
-        ("--gsm8k-limit", "gsm8k_limit", 0),
-        ("--mmlu-limit", "mmlu_limit", 0),
-        ("--ifeval-limit", "ifeval_limit", 0),
-        ("--toolscale-limit", "toolscale_limit", 0),
-    ):
-        int_val = getattr(args, attr, None)
-        if int_val is not None and int_val < minimum:
-            parser.error(f"{flag} must be at least {minimum}, got {int_val}")
-
-    gsm8k_shots = getattr(args, "gsm8k_shots", None)
-    if gsm8k_shots is not None and not (0 <= gsm8k_shots <= 8):
-        parser.error(f"--gsm8k-shots must be between 0 and 8, got {gsm8k_shots}")
-    mmlu_shots = getattr(args, "mmlu_shots", None)
-    if mmlu_shots is not None and not (0 <= mmlu_shots <= 5):
-        parser.error(f"--mmlu-shots must be between 0 and 5, got {mmlu_shots}")
-
-    for flag, attr in (
-        ("--error-rate", "error_rate"),
-        ("--alpha", "alpha"),
-        ("--context-pressure", "context_pressure"),
-        ("--min-p", "min_p"),
-    ):
-        value = getattr(args, attr, None)
-        if value is not None and not (0.0 <= value <= 1.0):
-            parser.error(f"{flag} must be between 0 and 1, got {value}")
-
-    top_p = getattr(args, "top_p", None)
-    if top_p is not None and not (0.0 < top_p <= 1.0):
-        parser.error(f"--top-p must be in (0, 1], got {top_p}")
-
-    temperature = getattr(args, "temperature", None)
-    if temperature is not None and (not math.isfinite(temperature) or temperature < 0):
-        parser.error(f"--temperature must be a finite number >= 0, got {temperature}")
-
-    for flag, attr in (
-        ("--timeout", "timeout"),
-        ("--repeat-penalty", "repeat_penalty"),
-        ("--baseline-tgs", "baseline_tgs"),
-        ("--spec-live-interval", "spec_live_interval"),
-        ("--decision-live-interval", "decision_live_interval"),
-    ):
-        pos_val = getattr(args, attr, None)
-        if pos_val is not None and (not math.isfinite(pos_val) or pos_val <= 0):
-            parser.error(f"{flag} must be a finite number greater than 0, got {pos_val}")
-
-    fill_tokens = getattr(args, "context_fill_tokens", None)
-    if fill_tokens is not None:
-        if fill_tokens < 1:
-            parser.error(f"--context-fill-tokens must be at least 1, got {fill_tokens}")
-        if getattr(args, "context_pressure", None) is not None:
-            parser.error("--context-fill-tokens cannot be combined with --context-pressure")
-        if getattr(args, "context_pressure_sweep", None) is not None:
-            parser.error("--context-fill-tokens cannot be combined with --context-pressure-sweep")
-
-
-def _validate_explicit_scenarios(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    # Validate explicit scenario IDs before server discovery or benchmark
-    # requests. This keeps a typo from turning into an empty run or a server
-    # failure. Probe/history/dry-run keep their own command semantics.
-    if args.probe:
-        return
-    if args.scenario_pack and args.context_pressure_sweep is not None:
-        # The sweep report renders every trace and its config records no
-        # pack attestation, so running a held-out pack there would publish it.
-        parser.error(
-            "--scenario-pack cannot be combined with --context-pressure-sweep: "
-            "the sweep report publishes full traces"
-        )
-    try:
-        resolved = _resolve_scenarios(args)
-    except ValueError as exc:
-        parser.error(str(exc))
-    # A filter that matches nothing would otherwise persist a completed
-    # 0-scenario run scored 0.  Modes that never send scenarios (--perf-only,
-    # plugin-only, --skip-tool-eval) ignore the selection, and a resume runs
-    # whatever its checkpoint left, which may legitimately be nothing.
-    if not resolved and not getattr(args, "resume", None) and _sends_system_prompt(args):
-        _reject_unknown_categories(args, parser)
-        message = "No scenarios matched the selected filters"
-        requested = {c.upper() for c in args.categories or []}
-        if "P" in requested and not (args.hardmode or args.hardmode_only):
-            message += "; Category P is Hard Mode, so add --hardmode"
-        parser.error(message)
-
-
-def _resolve_endpoint(
-    args: argparse.Namespace, parser: argparse.ArgumentParser, console: Console
-) -> _Endpoint:
-    """Resolve the server, credentials, headers, wire format, and backend label."""
-    # Cascade: CLI flag → provider-scoped env → generic env → auto-discovery.
-    # A selected provider owns its api_key and model: the generic
-    # TOOL_EVAL_API_KEY is for whatever the generic base URL points at, and
-    # sending it to a vendor API would just muddy a failed-auth diagnosis.
-    try:
-        provider = _resolve_provider(args.provider or os.getenv("TOOL_EVAL_PROVIDER"), os.environ)
-    except ValueError as exc:
-        parser.error(str(exc))
-    try:
-        if provider is not None:
-            model = args.model or provider.model
-            backend = (
-                args.backend or os.getenv("TOOL_EVAL_BACKEND", "") or provider.backend_label or ""
-            )
-            base_url = args.base_url or provider.base_url
-            api_key = args.api_key or provider.api_key
-            env_headers = provider.headers
-            session_header = args.session_header or provider.session_header
-        else:
-            model = args.model or os.getenv("TOOL_EVAL_MODEL") or None
-            backend = args.backend or os.getenv("TOOL_EVAL_BACKEND", "")
-            base_url = args.base_url or os.getenv("TOOL_EVAL_BASE_URL", "")
-            api_key = args.api_key or os.getenv("TOOL_EVAL_API_KEY")
-            env_headers = _parse_header_env(os.getenv("TOOL_EVAL_HEADERS"))
-            session_header = args.session_header or os.getenv("TOOL_EVAL_SESSION_HEADER") or None
-        # Headers merge rather than replace: a --header adds to the provider's.
-        request_headers = _merge_headers(env_headers, _parse_header_pairs(args.header))
-    except ValueError as exc:
-        parser.error(str(exc))
-    backend_explicit = bool(backend)
-    # Left on the namespace so the plugin and pressure runners, which take
-    # ``args`` rather than the resolved connection, build their adapters the
-    # same way (see cli.helpers.adapter_options).
-    args._request_headers = request_headers
-    args._session_header = session_header
-    # Pre-flight requests are single-shot conversations of their own.
-    probe_headers = _attach_session_id(request_headers, session_header)
-
-    # Fallback: construct URL from TOOL_EVAL_HOST + TOOL_EVAL_PORT
-    if not base_url:
-        host = os.getenv("TOOL_EVAL_HOST", "")
-        port = os.getenv("TOOL_EVAL_PORT", "")
-        if host:
-            base_url = f"http://{host}:{port}" if port else f"http://{host}"
-
-    # Auto-discovery: probe localhost on common inference server ports
-    if not base_url:
-        if not args.json:
-            console.print("\n[dim]  No --base-url provided, scanning localhost…[/]")
-        discovered = _discover_server(headless=args.json, console=console, redact=args.redact_url)
-        if discovered:
-            base_url, discovered_backend = discovered
-            if not backend:
-                backend = discovered_backend
-        else:
-            if args.json:
-                _headless_error(
-                    NO_SERVER,
-                    "No inference server found on localhost. "
-                    "Tried ports: " + ", ".join(str(p) for p, _, _ in _DISCOVERY_PORTS),
-                    exit_code=2,
-                )
-            parser.error(
-                "No inference server found on localhost. "
-                "Use --base-url or set TOOL_EVAL_BASE_URL in .env"
-            )
-
-    # Which request format the endpoint speaks (native Gemini vs OpenAI-compatible).
-    # Detected from the URL unless --format pins it.
-    try:
-        wire_format = _resolve_wire_format(args.format, base_url)
-    except ValueError as exc:
-        parser.error(str(exc))
-    # An explicit label (flag, env, or provider) is kept, including "unknown".
-    # A label from local discovery is only the fallback for an inconclusive probe.
-    detection = asyncio.run(
-        identify_backend(
-            backend if backend_explicit else None,
-            base_url=base_url,
-            api_key=api_key,
-            wire_format=wire_format,
-            probe=bool(base_url) and not args.probe and not args.no_probe_engine,
-            fallback=backend or "unknown",
-        )
-    )
-    backend = detection.backend
-    if detection.server_name:
-        if args.json:
-            sys.stderr.write(json.dumps({"event": "backend_detected", "backend": backend}) + "\n")
-            sys.stderr.flush()
-        else:
-            console.print(f"[dim]  Detected backend: {escape(detection.server_name)}[/]")
-
-    return _Endpoint(
-        base_url=base_url,
-        api_key=api_key,
-        backend=backend,
-        wire_format=wire_format,
-        model=model,
-        probe_headers=probe_headers,
-    )
-
-
-def _run_probe_mode(
-    args: argparse.Namespace,
-    console: Console,
-    endpoint: _Endpoint,
-    *,
-    parser: argparse.ArgumentParser | None = None,
-) -> None:
-    """``--probe``: check server reachability and optional tool/template fidelity."""
-    display_url = _redact_url(endpoint.base_url) if args.redact_url else endpoint.base_url
-    check_tools = bool(getattr(args, "check_tools", False))
-    check_template = bool(getattr(args, "check_template", False))
-    if not (check_tools or check_template):
-        _probe_server(
-            console,
-            endpoint.base_url,
-            endpoint.api_key,
-            display_url=display_url,
-            headless=args.json,
-            wire_format=endpoint.wire_format,
-            headers=endpoint.probe_headers,
-        )
-        return
-
-    prior_asyncio = _model_probe.asyncio
-    _model_probe.asyncio = asyncio
-    try:
-        model_ids = _model_probe.probe_server_models(
-            console,
-            endpoint.base_url,
-            endpoint.api_key,
-            display_url=display_url,
-            headless=args.json,
-            wire_format=endpoint.wire_format,
-            headers=endpoint.probe_headers,
-        )
-    finally:
-        _model_probe.asyncio = prior_asyncio
-
-    resolved_model = args.model or endpoint.model or (model_ids[0] if model_ids else None)
-    if not resolved_model:
-        if args.json:
-            if check_tools:
-                tool_event = {
-                    "event": "tool_call_probe",
-                    "status": "failed",
-                    "parsed": False,
-                    "arguments_intact": False,
-                    "detail": "No model could be resolved from --model or /v1/models.",
-                }
-                sys.stderr.write(json.dumps(tool_event) + "\n")
-            if check_template:
-                template_event = {
-                    "event": "template_probe",
-                    "status": "failed",
-                    "passed": False,
-                    "diagnosis": "model_or_endpoint_failure",
-                    "detail": "No model could be resolved from --model or /v1/models.",
-                }
-                sys.stderr.write(json.dumps(template_event) + "\n")
-            sys.stderr.flush()
-        else:
-            if check_tools:
-                console.print(
-                    "  [bold red]✗[/] [red]Cannot verify tool-call wire parsing: "
-                    "pass --model or ensure /v1/models lists at least one model.[/]"
-                )
-            if check_template:
-                console.print(
-                    "  [bold red]✗[/] [red]Cannot verify chat-template fidelity: "
-                    "pass --model or ensure /v1/models lists at least one model.[/]"
-                )
-        sys.exit(1)
-
-    active_parser = parser if parser is not None else _make_parser()
-    extra_params = _build_extra_params(args, active_parser)
-    failed = False
-    if check_tools:
-        tool_probe = _check_tool_call_wire_parsing(
-            console,
-            endpoint.base_url,
-            resolved_model,
-            endpoint.api_key,
-            backend=endpoint.backend,
-            headless=bool(args.json),
-            timeout_seconds=args.timeout,
-            extra_params=extra_params or None,
-            wire_format=endpoint.wire_format,
-            headers=endpoint.probe_headers,
-            display_url=display_url,
-            exit_on_failure=not check_template,
-        )
-        if not (tool_probe.parsed and tool_probe.arguments_intact):
-            failed = True
-    if check_template:
-        template_probe = _check_chat_template_fidelity(
-            console,
-            endpoint.base_url,
-            resolved_model,
-            endpoint.api_key,
-            backend=endpoint.backend,
-            headless=bool(args.json),
-            timeout_seconds=args.timeout,
-            extra_params=extra_params or None,
-            wire_format=endpoint.wire_format,
-            headers=endpoint.probe_headers,
-            display_url=display_url,
-            tokenizer=getattr(args, "tokenizer", None),
-            exit_on_failure=not check_tools,
-        )
-        if not template_probe.passed:
-            failed = True
-    sys.exit(1 if failed else 0)
-
-
-def _resolve_target(
-    args: argparse.Namespace,
-    parser: argparse.ArgumentParser,
-    console: Console,
-    endpoint: _Endpoint,
-) -> _Target:
-    """Pick the model and request parameters; the run context is attached later."""
-    base_url, api_key, wire_format = endpoint.base_url, endpoint.api_key, endpoint.wire_format
-
-    # URL redaction for display (actual API calls use real base_url)
-    display_url = _redact_url(base_url) if args.redact_url else base_url
-
-    # Auto-detect model if not provided
-    model = endpoint.model
-    display_name: str | None = None
-    if not model:
-        if not args.json:
-            console.print("\n[bold]🔧 Tool-Call Benchmark[/]")
-            console.print(f"[dim]  Server: {escape(display_url)}[/]")
-        model, display_name = _detect_model(
-            base_url,
-            api_key,
-            console,
-            display_url=display_url,
-            headless=args.json,
-            wire_format=wire_format,
-            headers=endpoint.probe_headers,
-        )
-        if not args.json:
-            console.print()
-
-    _detect_decision_judge_model(args, console)
-
-    # display_name is the human-readable model (e.g. "Intel/gemma-4-31B-it-int4-AutoRound")
-    # model is the API alias (e.g. "gemma4") — used in all API calls
-    display_name = display_name or model
-
-    extra_params = _build_extra_params(args, parser)
-    _resolve_reviewer(args, console, endpoint, extra_params)
-
-    _validate_scenario_selection(args, parser, console)
-
-    return _Target(
-        args=args,
-        parser=parser,
-        console=console,
-        model=model,
-        display_name=display_name,
-        backend=endpoint.backend,
-        base_url=base_url,
-        display_url=display_url,
-        api_key=api_key,
-        wire_format=wire_format,
-        extra_params=extra_params,
-        run_context=None,
-    )
-
-
-def _runs_a_storage_command(args: argparse.Namespace) -> bool:
-    """Whether the invocation only reads or manages stored runs (history, export, ...).
-
-    Those commands run no scenario, so a reviewer flag there would be ignored
-    without a word; ``handle_local_command`` routes the same flags.
-    """
-    return bool(
-        args.history
-        or args.leaderboard
-        or args.export
-        or args.compare
-        or getattr(args, "serve", False)
-        or getattr(args, "card", None) is not None
-        or getattr(args, "card_run", None)
-        or getattr(args, "delete", None) is not None
-    )
-
-
-def _resolve_reviewer(
-    args: argparse.Namespace,
-    console: Console,
-    endpoint: _Endpoint,
-    extra_params: dict[str, Any],
-) -> None:
-    """Leave the reviewer on ``args._reviewer``, asking its server for the model if needed.
-
-    A single served model is taken. Several open the interactive picker, and
-    stop a ``--json`` run rather than guess, since the reviewer is recorded.
-    """
-    args._reviewer = None
-    if not reviewer_requested(args):
-        return
-    connection: dict[str, Any] = args._reviewer_connection
-    reviewer_url: str | None = connection["base_url"]
-    model: str | None = connection["model"]
-    # The origin only: some gateways authenticate by a path segment.
-    display_url = reviewer_origin(reviewer_url) if reviewer_url else "(benchmarked server)"
-    if model is None and reviewer_url is not None:
-        # Discovery authenticates exactly as the reviewer's requests will.
-        shared = same_server(reviewer_url, endpoint.base_url)
-        discovery_key = connection_api_key(connection, endpoint.base_url, endpoint.api_key)
-        headers = connection["headers"]
-        if headers is None and shared:
-            inherited = getattr(args, "_request_headers", None)
-            # Discovery authenticates as the chat requests will: a reviewer
-            # with its own key drops the run's Authorization header.
-            headers = (
-                inherited if discovery_key == endpoint.api_key else without_auth_headers(inherited)
-            )
-        session_header = connection["session_header"] or (
-            getattr(args, "_session_header", None) if shared else None
-        )
-        if session_header:
-            headers = _attach_session_id(headers or {}, session_header)
-        # HTTPX logs the discovery URL, query string included: mask what the
-        # reviewer's URL, key, and headers carry while it runs.
-        unmask = mask_credentials_in_adapter_logs(
-            ReviewerSettings(
-                model="(discovery)",
-                base_url=reviewer_url,
-                api_key=discovery_key,
-                extra_headers=headers,
-            ),
-            api_key=endpoint.api_key,
-            headers=getattr(args, "_request_headers", None),
-        )
-        try:
-            model, _ = _detect_model(
-                reviewer_url,
-                discovery_key,
-                console,
-                display_url=display_url,
-                headless=args.json,
-                wire_format=_resolve_wire_format(
-                    getattr(args, "reviewer_format", None), reviewer_url
-                ),
-                headers=headers,
-                multiple_models_hint=(
-                    "pass --reviewer-model or set TOOL_EVAL_REVIEWER_MODEL to choose one"
-                ),
-                show_body=False,
-            )
-        finally:
-            unmask()
-    if model is None:  # prepare_reviewer_args rejects a reviewer with neither.
-        return
-    args._reviewer = build_reviewer_settings(
-        args,
-        model=model,
-        main_base_url=endpoint.base_url,
-        main_api_key=endpoint.api_key,
-        main_headers=getattr(args, "_request_headers", None),
-        main_session_header=getattr(args, "_session_header", None),
-        main_extra_params=extra_params,
-    )
-    if not args.json:
-        console.print(f"[dim]  Reviewer: {escape(model)} @ {escape(display_url)}[/]")
-        if _any_plugin_selected(args):
-            console.print(
-                "[dim]  The reviewer applies to the tool-call scenarios; plugin "
-                "benchmarks run without it.[/]"
-            )
-
-
-def _report_model_label(display_name: str, args: argparse.Namespace) -> str:
-    """The model a cross-trial summary names: the pair when a reviewer took part."""
-    reviewer = getattr(args, "_reviewer", None)
-    return f"{display_name} + reviewer {reviewer.model}" if reviewer is not None else display_name
-
-
-def _build_extra_params(
-    args: argparse.Namespace, parser: argparse.ArgumentParser
-) -> dict[str, Any]:
-    """Build extra_params from the sampling and thinking flags."""
-    extra_params: dict[str, Any] = {}
-    if args.no_think:
-        extra_params["chat_template_kwargs"] = {"enable_thinking": False}
-    if args.top_p is not None:
-        extra_params["top_p"] = args.top_p
-    if args.top_k is not None:
-        extra_params["top_k"] = args.top_k
-    if args.min_p is not None:
-        extra_params["min_p"] = args.min_p
-    if args.repeat_penalty is not None:
-        extra_params["repetition_penalty"] = args.repeat_penalty
-
-    # Merge --backend-kwargs (JSON blob) — wins over individual flags on conflict
-    if args.backend_kwargs:
-        try:
-            bk = json.loads(args.backend_kwargs)
-            if not isinstance(bk, dict):
-                parser.error(
-                    f"--backend-kwargs must be a JSON object (dict), got {type(bk).__name__}"
-                )
-            # Deep-merge: for dict-valued keys, merge nested dicts; else override
-            for k, v in bk.items():
-                if isinstance(v, dict) and isinstance(extra_params.get(k), dict):
-                    extra_params[k].update(v)
-                else:
-                    extra_params[k] = v
-        except json.JSONDecodeError as exc:
-            parser.error(f"--backend-kwargs is not valid JSON: {exc}")
-    return extra_params
-
-
-def _run_spec_live_mode(target: _Target) -> None:
-    """``--spec-live``: standalone live monitor (exits after session)."""
-    args = target.args
-    from tool_eval_bench.cli.spec_live_display import run_spec_live
-    from tool_eval_bench.runner.spec_detection import canonical_spec_method_hint
-
-    spec_method_hint = canonical_spec_method_hint(args.spec_method)
-
-    try:
-        asyncio.run(
-            run_spec_live(
-                target.base_url,
-                api_key=target.api_key,
-                metrics_url=args.metrics_url,
-                model_name=target.display_name,
-                poll_interval=args.spec_live_interval,
-                spec_method=spec_method_hint,
-                redact_endpoint=args.redact_url,
-            )
-        )
-    except KeyboardInterrupt:
-        pass
-
-
-def _run_decision_live_mode(target: _Target) -> None:
-    """``--decision-live``: standalone canary monitor (exits after session)."""
-    args = target.args
-    from tool_eval_bench.cli.decision_live_display import run_decision_live
-    from tool_eval_bench.cli.helpers import adapter_options
-    from tool_eval_bench.domain.decision import DecisionUnsupportedError
-    from tool_eval_bench.plugins.decision.typed_decisions import DatasetIntegrityError
-
-    try:
-        asyncio.run(
-            run_decision_live(
-                target.base_url,
-                model=target.model,
-                api_key=target.api_key,
-                metrics_url=args.metrics_url,
-                display_url=target.display_url,
-                interval=args.decision_live_interval,
-                timeout_seconds=args.timeout,
-                adapter_options=adapter_options(args),
-            )
-        )
-    except KeyboardInterrupt:
-        pass
-    except (DecisionUnsupportedError, DatasetIntegrityError) as exc:
-        detail = _redact_urls(str(exc)) if args.redact_url else str(exc)
-        target.console.print(f"\n[bold red]Decision monitor error:[/] {escape(detail)}")
-        sys.exit(1)
-
-
-def _ready_target(target: _Target, probe_headers: Mapping[str, str]) -> _Target:
-    """Gate on a model that answers, then attach the run context every mode reports."""
-    args, console = target.args, target.console
-    # A decision model has no chat endpoint to preflight or warm; the plugin
-    # reports an unreachable or unsupported endpoint itself.
-    if not args.decision_bench_only:
-        _check_endpoint_ready(
-            args,
-            console,
-            base_url=target.base_url,
-            model=target.model,
-            api_key=target.api_key,
-            wire_format=target.wire_format,
-            extra_params=target.extra_params,
-            headers=probe_headers,
-            display_url=target.display_url,
-        )
-
-    run_context = _build_run_context(
-        args,
-        console,
-        model=target.model,
-        backend=target.backend,
-        base_url=target.base_url,
-        api_key=target.api_key,
-        extra_params=target.extra_params,
-    )
-    return replace(target, run_context=run_context)
-
-
-def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
-    """Build the ``--context-pressure`` or ``--context-fill-tokens`` filler.
-
-    Scales ``args.timeout`` for a large fill; that must happen before the
-    resume check and the run read it.
-    """
-    args, console = target.args, target.console
-    base_url, model, api_key = target.base_url, target.model, target.api_key
-    fill_tokens_requested = getattr(args, "context_fill_tokens", None)
-    if args.context_pressure is None and fill_tokens_requested is None:
-        return None
-
-    from rich.progress import BarColumn, Progress, TextColumn
-
-    from tool_eval_bench.runner.context_pressure import (
-        _RESERVED_FOR_OUTPUT,
-        _RESERVED_FOR_SCENARIO,
-        build_pressure_messages,
-        calibrate_pressure_messages,
-        prepare_context_pressure,
-        reported_context_window,
-    )
-
-    ratio = max(0.0, min(1.0, args.context_pressure or 0.0))
-    try:
-        pressure_cfg = asyncio.run(
-            prepare_context_pressure(
-                base_url,
-                model,
-                api_key,
-                ratio=ratio,
-                context_size_override=args.context_size,
-                metrics_url=args.metrics_url,
-                client_factory=HTTPMeasurementClient,
-                reported_context=reported_context_window(target.run_context),
-                fill_tokens=fill_tokens_requested,
-            )
-        )
-        if ratio > 0 and pressure_cfg.fill_tokens == 0:
-            # A light ratio may legitimately give a small fill; none at all
-            # means the window cannot hold the reserve or the ratio rounds to
-            # nothing, and the run would be stored as pressured while the
-            # model saw no filler.
-            raise ValueError(
-                f"--context-pressure {ratio:g} gives no filler in a "
-                f"{pressure_cfg.detected_context:,}-token context window: "
-                f"{_RESERVED_FOR_OUTPUT + _RESERVED_FOR_SCENARIO:,} tokens are reserved for "
-                "output and the scenario, so either the window is too small or the ratio "
-                "too low. Check --context-size; on llama.cpp the window is per slot (-c "
-                "divided by --parallel)."
-            )
-
-        if not args.json and pressure_cfg.fill_tokens > 0:
-            with Progress(
-                TextColumn("  [bold cyan]⚡ Filling context[/]"),
-                BarColumn(bar_width=40),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TextColumn("[dim]{task.completed:,}/{task.total:,} tokens[/]"),
-                console=console,
-            ) as progress:
-                task = progress.add_task("fill", total=pressure_cfg.fill_tokens)
-                pressure_messages = build_pressure_messages(
-                    pressure_cfg,
-                    on_chunk=lambda tokens_so_far: progress.update(
-                        task,
-                        completed=tokens_so_far,
-                    ),
-                    seed=args.seed,
-                )
-        else:
-            pressure_messages = build_pressure_messages(
-                pressure_cfg,
-                seed=args.seed,
-            )
-
-        # Calibrate using server-side tokenizer for exact token counts
-        estimated: list[bool] = []
-        pressure_messages, actual_fill_tokens = asyncio.run(
-            calibrate_pressure_messages(
-                pressure_messages,
-                pressure_cfg.fill_tokens,
-                base_url,
-                model,
-                api_key,
-                client_factory=HTTPMeasurementClient,
-                seed=args.seed,
-                on_estimated=lambda: estimated.append(True),
-            )
-        )
-
-        pressure_config_dict: dict[str, Any] = {
-            "ratio": pressure_cfg.ratio,
-            "fill_tokens": actual_fill_tokens,
-            "fill_tokens_target": pressure_cfg.fill_tokens,
-            "context_size": pressure_cfg.detected_context,
-        }
-        if fill_tokens_requested is not None:
-            pressure_config_dict["fill_tokens_requested"] = fill_tokens_requested
-        if estimated:
-            # No usable /tokenize: fill_tokens is the 4 chars/token estimate,
-            # which runs well above real counts on common tokenizers.
-            pressure_config_dict["fill_tokens_estimated"] = True
-        if not args.json:
-            # Compute tool token estimate for selected scenarios
-            from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
-
-            selected_sc = _resolve_scenarios(args)
-
-            max_toolset = UNIVERSAL_TOOLS
-            for s in selected_sc:
-                if s.tools_override and len(s.tools_override) > len(max_toolset):
-                    max_toolset = s.tools_override
-            tool_tokens_est = len(json.dumps(max_toolset)) // 4
-            num_tools = len(max_toolset)
-
-            budget = pressure_cfg.budget_breakdown(tool_tokens=tool_tokens_est)
-            fill_k = pressure_cfg.fill_tokens / 1024
-            tool_k = tool_tokens_est / 1024
-            out_k = _RESERVED_FOR_OUTPUT / 1024
-            head_k = budget["remaining_headroom_tokens"] / 1024
-
-            console.print(
-                f"  [dim]  {pressure_cfg.summary()} — "
-                f"{len(pressure_messages or [])} filler messages[/]"
-            )
-            console.print(
-                f"  [dim]  Budget: [bold]{fill_k:.0f}K[/] fill │ "
-                f"~{tool_k:.0f}K tools ({num_tools} loaded) │ "
-                f"{out_k:.0f}K output │ "
-                f"{head_k:.0f}K scenario headroom[/]"
-            )
-            console.print(
-                "  [dim]  An unscored warm-up request prefills the filler once so every "
-                "scenario starts from the server's prefix cache[/]\n"
-            )
-        # Auto-scale timeout for context pressure: large fills need
-        # significant prefill time.  Without this, a 182K fill at the
-        # default 120s timeout will fail while the same level passes in
-        # a --context-pressure-sweep (which has its own auto-scaling).
-        # Scaled from the target, not the calibrated count: the timeout is
-        # persisted, fingerprinted, and checked on resume, and unseeded
-        # filler calibrates to a slightly different count every run.
-        if pressure_cfg.fill_tokens > 0:
-            fill_scaling = pressure_cfg.fill_tokens / 50_000 * 60.0
-            scaled_timeout = max(args.timeout, 120.0 + fill_scaling)
-            if scaled_timeout > args.timeout:
-                logger.info(
-                    "Auto-scaling timeout from %.0fs to %.0fs for %d fill tokens",
-                    args.timeout,
-                    scaled_timeout,
-                    pressure_cfg.fill_tokens,
-                )
-                args.timeout = scaled_timeout
-
-    except ValueError as exc:
-        report_run_failed(console, f"\n[bold red]Error:[/] {escape(str(exc))}")
-        sys.exit(1)
-    return _PressureFill(messages=pressure_messages, config=pressure_config_dict)
-
-
-def _run_plugins_mode(target: _Target) -> bool:
-    """Run the selected accuracy plugins. Returns True when the CLI is done."""
-    args = target.args
-    from tool_eval_bench.cli.plugin_runners import run_selected_plugins
-
-    return run_selected_plugins(
-        target.console,
-        target.model,
-        target.display_name,
-        target.base_url,
-        target.api_key,
-        args,
-        runners={
-            "gsm8k": _run_gsm8k_benchmark,
-            "mmlu": _run_mmlu_benchmark,
-            "ifeval": _run_ifeval_benchmark,
-            "needle": _run_needle_benchmark,
-            "toolscale": _run_toolscale_benchmark,
-            "decision": _run_decision_benchmark,
-        },
-        extra_params=target.extra_params or None,
-        output_dir=args.output_dir,
-        run_context=target.run_context,
-    )
-
-
-def _skip_tool_eval_mode(target: _Target) -> bool:
-    """``--skip-tool-eval``: stop before the scenarios. Returns True when the CLI is done."""
-    args = target.args
-    if not args.skip_tool_eval:
-        return False
-    any_benchmark = (
-        args.perf
-        or args.perf_only
-        or args.spec_bench
-        or args.spec_live
-        or _any_plugin_selected(args)
-    )
-    if not any_benchmark:
-        message = (
-            "--skip-tool-eval has no effect without "
-            "--perf, --perf-only, --spec-bench, --gsm8k, --mmlu, --ifeval, "
-            "--needle, --toolscale, or --decision-bench."
-        )
-        if args.json:
-            logger.warning(message)
-        else:
-            target.console.print(f"\n  [yellow]⚠ {message}[/]\n")
-    return True
-
-
-def _load_resumable(
-    args: argparse.Namespace, console: Console
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Read the ``--resume`` run and its checkpoints; exit 1 when it cannot resume."""
-    from tool_eval_bench.application.run_queries import resume_state
-
-    resumable = resume_state(args.resume)
-    if resumable is None:
-        report_run_failed(
-            console,
-            f"\n  [bold red]✗[/] Run '{args.resume}' not found in history.\n"
-            "  [dim]Use --history to list available runs.[/]\n",
-        )
-        sys.exit(1)
-    prev_run, prev_checkpoints = resumable
-    if prev_run.get("status") == "completed":
-        report_run_failed(
-            console,
-            "\n  [bold red]✗ Resume aborted: run is already completed[/]\n"
-            "  [dim]Completed scenario outcomes are immutable. Start a fresh run to retry.[/]\n",
-        )
-        sys.exit(1)
-    return prev_run, prev_checkpoints
-
-
-def _resumed_session_id(prev_run: Mapping[str, Any]) -> str | None:
-    """The session a ``--resume`` invocation joins, or None to start a new one.
-
-    A resume finishes the interrupted invocation's scored run under its
-    original run ID, so it keeps that invocation's session id too. The plugin,
-    standalone perf, and other rows written before the interruption then share
-    a session with the completed scored run, and a card of that session shows
-    them together. Throughput from ``--perf`` alongside scenarios is the
-    exception: those samples ride in memory until the scored run is saved, so
-    an interruption loses them. Any rows the resume invocation writes join the
-    same session. A run stored before session ids existed has none, so the
-    resume starts a fresh session.
-
-    The column wins over the metadata copy: a write without a session, such as
-    a Python API resume, replaces the metadata but keeps the column.
-    """
-    session_id = prev_run.get("session_id") or (prev_run.get("metadata") or {}).get("session_id")
-    return session_id if isinstance(session_id, str) and session_id else None
-
-
-def _plan_resume(target: _Target, pressure: _PressureFill | None) -> None:
-    """Preserve completed model outcomes under the original run ID.
-
-    Leaves the plan on ``args._resume_*`` (and narrows ``args.scenarios`` to
-    the rerun subset), where ``ScoredRun.from_args`` reads it; exits 1 when the
-    run cannot be resumed.
-    """
-    args, console = target.args, target.console
-    resume_prior_results: list[dict] | None = None
-    resume_scenarios: list[ScenarioDefinition] | None = None
-    if args.resume:
-        prev_run, prev_checkpoints = _load_resumable(args, console)
-
-        # Resolve before changing args.scenarios.  These definitions are needed
-        # to rescore checkpointed Hard Mode and held-out-pack results.
-        resume_scenarios = _resolve_scenarios(args)
-
-        # Validate every persisted benchmark condition, not merely model/backend.
-        prev_config = prev_run.get("config") or {}
-        mismatches = _resume_config_mismatches(
-            prev_config,
-            model=target.model,
-            backend=target.backend,
-            base_url=target.base_url,
-            scenarios=resume_scenarios,
-            args=args,
-            extra_params=target.extra_params or None,
-            scenario_packs=_pack_attestations(args),
-            context_pressure=pressure.config if pressure is not None else None,
-            wire_format=target.wire_format,
-        )
-        if mismatches:
-            report_run_failed(
-                console,
-                f"\n  [bold red]✗ Resume aborted: configuration mismatch[/]\n"
-                f"  [dim]Prior run differs in: {escape(', '.join(mismatches))}[/]\n"
-                f"  [dim]Start a fresh run instead of resuming.[/]\n",
-            )
-            sys.exit(1)
-
-        escaped_resume = escape(str(args.resume))
-        prev_results = prior_results_for_resume(prev_run, prev_checkpoints)
-        if prev_checkpoints and not args.json:
-            console.print(
-                f"  [dim]ℹ Recovered {len(prev_checkpoints)} checkpointed scenario(s) from "
-                f"interrupted run {escaped_resume}.[/]"
-            )
-        if not prev_results:
-            if not args.json:
-                console.print(
-                    f"  [dim]ℹ No scenario results in run {escaped_resume} — running all.[/]"
-                )
-        else:
-            prior_by_id = {
-                result["scenario_id"]: result
-                for result in prev_results
-                if result.get("scenario_id") and not _resume_result_requires_rerun(result)
-            }
-            rerun_ids = {
-                scenario.id
-                for scenario in resume_scenarios
-                if _resume_result_requires_rerun(
-                    next(
-                        (
-                            result
-                            for result in prev_results
-                            if result.get("scenario_id") == scenario.id
-                        ),
-                        {},
-                    )
-                )
-            }
-
-            if not prior_by_id:
-                if not args.json:
-                    console.print(
-                        f"  [dim]ℹ No reusable scenario outcomes in run {escaped_resume}"
-                        " — running all.[/]"
-                    )
-            else:
-                remaining = [s for s in resume_scenarios if s.id in rerun_ids]
-                if not args.json:
-                    console.print(
-                        f"  [bold cyan]↻ Resume:[/] preserving {len(prior_by_id)} completed outcomes "
-                        f"in [dim]{escaped_resume}[/], "
-                        f"running {len(remaining)} remaining"
-                    )
-                # An empty subset is intentional: service finalizes the fully
-                # checkpointed interrupted run without changing any outcome.
-                args.scenarios = [s.id for s in remaining]
-                args._resume_remaining_scenarios = remaining
-                resume_prior_results = list(prior_by_id.values())
-        # Store resume_run_id on args so the run_benchmark helpers can pass it
-        args._resume_run_id = args.resume
-    else:
-        args._resume_run_id = None
-    # Store prior results on args for service merge
-    args._resume_prior_results = resume_prior_results
-    args._resume_scenarios = resume_scenarios
-    if not hasattr(args, "_resume_remaining_scenarios"):
-        args._resume_remaining_scenarios = None
-
-
-def _run_scored_mode(
-    target: _Target,
-    throughput_samples: list[ThroughputSample],
-    pressure: _PressureFill | None,
-) -> None:
-    """Run the tool-call scenarios through the live, JSON, or plain runner."""
-    args, console = target.args, target.console
-    service = BenchmarkService(
-        reporter=MarkdownReporter(root=args.output_dir),
-    )
-    use_live = not args.json and not args.no_live
-    trials = max(1, args.trials)
-
-    _plan_resume(target, pressure)
-    _resolve_diff_target(args)
-
-    if trials > 1 and not args.json:
-        console.print(f"[dim]  Running {trials} trials for statistical measurement…[/]\n")
-
-    pressure_messages = pressure.messages if pressure is not None else None
-    pressure_config = pressure.config if pressure is not None else None
-    if use_live:
-        _run_with_live_display(
-            service,
-            console,
-            target.model,
-            target.display_name,
-            target.backend,
-            target.base_url,
-            target.api_key,
-            args,
-            throughput_samples=throughput_samples,
-            extra_params=target.extra_params or None,
-            context_pressure_messages=pressure_messages,
-            context_pressure_config=pressure_config,
-            display_url=target.display_url,
-            run_context=target.run_context,
-            wire_format=target.wire_format,
-        )
-    elif args.json:
-        _run_json(
-            service,
-            target.model,
-            target.backend,
-            target.base_url,
-            target.api_key,
-            args,
-            throughput_samples=throughput_samples,
-            extra_params=target.extra_params or None,
-            context_pressure_messages=pressure_messages,
-            context_pressure_config=pressure_config,
-            run_context=target.run_context,
-            wire_format=target.wire_format,
-        )
-    else:
-        _run_plain(
-            service,
-            console,
-            target.model,
-            target.display_name,
-            target.backend,
-            target.base_url,
-            target.api_key,
-            args,
-            throughput_samples=throughput_samples,
-            extra_params=target.extra_params or None,
-            context_pressure_messages=pressure_messages,
-            context_pressure_config=pressure_config,
-            display_url=target.display_url,
-            run_context=target.run_context,
-            wire_format=target.wire_format,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Multi-trial aggregation
-# ---------------------------------------------------------------------------
-
-
-def _print_trials_summary(console: Console, agg: dict) -> None:
-    """Print aggregated trial statistics."""
-    if not agg:
-        return
-
-    from rich.panel import Panel
-
-    n = agg["trials"]
-    score_mean = agg["final_score_mean"]
-    score_std = agg["final_score_stddev"]
-    ci = agg["final_score_ci95"]
-    median = agg["final_score_median"]
-
-    if score_mean is None:
-        score_line = "  [bold]Score:[/]   [yellow]Withheld[/] [dim](no gradable scenarios)[/]\n"
-        median_line = "  [bold]Median:[/]  —\n"
-        ci_line = "  [bold]95% CI:[/]  —\n"
-    else:
-        std_val = 0.0 if score_std is None else score_std
-        score_line = f"  [bold]Score:[/]   {score_mean:.1f} ± {std_val:.1f} / 100\n"
-        median_line = (
-            f"  [bold]Median:[/]  {median:.1f}\n"
-            if median is not None
-            else "  [bold]Median:[/]  —\n"
-        )
-        ci_line = (
-            f"  [bold]95% CI:[/]  [{ci[0]:.1f}, {ci[1]:.1f}]\n"
-            if ci is not None
-            else "  [bold]95% CI:[/]  —\n"
-        )
-
-    content = (
-        f"  [bold]Trials:[/]  {n}\n"
-        f"{score_line}"
-        f"{median_line}"
-        f"{ci_line}"
-        f"  [bold]Points:[/]  {agg['total_points_mean']:.1f} ± {agg['total_points_stddev']:.1f}\n"
-    )
-
-    # Pass@k / Pass^k reliability metrics
-    if "pass_at_k" in agg:
-        pass_at = agg["pass_at_k"]
-        pass_hat = agg["pass_hat_k"]
-        gap = agg["reliability_gap"]
-        content += (
-            f"\n  [bold]Pass@{n}:[/]  {pass_at:.1f}%  [dim](capability ceiling)[/]\n"
-            f"  [bold]Pass^{n}:[/]  {pass_hat:.1f}%  [dim](reliability floor)[/]\n"
-        )
-        if gap > 5:
-            content += f"  [bold yellow]⚠ Gap:[/]    {gap:.1f}pp  [dim](high variance — consistency issue)[/]\n"
-        elif gap > 0:
-            content += f"  [bold]Gap:[/]     {gap:.1f}pp\n"
-
-    # Show categories with variance
-    cat_lines = []
-    for cat_key, cs in agg["per_category"].items():
-        if cs["stddev_percent"] > 0:
-            cat_lines.append(
-                f"    {cat_key} {cs['label']}: {cs['mean_percent']:.0f}% ± {cs['stddev_percent']:.1f}%"
-            )
-    if cat_lines:
-        content += "\n  [bold]Categories with variance:[/]\n" + "\n".join(cat_lines)
-
-    # Show scenarios with variance
-    unstable = [(sid, st) for sid, st in agg["per_scenario"].items() if st["stddev"] > 0]
-    if unstable:
-        content += f"\n\n  [bold yellow]⚡ {len(unstable)} unstable scenario(s):[/]"
-        for sid, st in unstable:
-            pts_str = ",".join(str(p) for p in st["points"])
-            content += f"\n    {sid}: {st['mean']:.1f} ± {st['stddev']:.1f}  [dim]({pts_str})[/]"
-
-    console.print(
-        Panel(
-            content,
-            title="[bold]📊 Trial Statistics[/]",
-            border_style="bright_cyan",
-            padding=(1, 2),
-        )
-    )
-    console.print()
-
-
-# ---------------------------------------------------------------------------
-
-
-def _run_with_live_display(
-    service: BenchmarkService,
-    console: Console,
-    model: str,
-    display_name: str,
-    backend: str,
-    base_url: str,
-    api_key: str | None,
-    args: argparse.Namespace,
-    *,
-    throughput_samples: list | None = None,
-    extra_params: dict[str, Any] | None = None,
-    context_pressure_messages: list[ChatMessage] | None = None,
-    context_pressure_config: dict | None = None,
-    display_url: str | None = None,
-    run_context: Any | None = None,
-    wire_format: str = "openai",
-) -> None:
-    """Run with Rich live display — the default visual mode."""
-    from tool_eval_bench.runner.orchestrator import score_results
-
-    scenarios = _execution_scenarios(args)
-
-    trials = max(1, args.trials)
-    all_summaries = []
-
-    # --- Trial 1: with live display ---
-    reviewer = getattr(args, "_reviewer", None)
-    display = BenchmarkDisplay(
-        display_name,
-        backend,
-        display_url or base_url,
-        scenarios,
-        run_context=run_context,
-        reviewer_model=reviewer.model if reviewer is not None else None,
-    )
-    display.start()
-
-    async def run_trial(request: ScoredRun, *, show: bool = False) -> dict:
-        callbacks: dict = {}
-        if request.audits_answers:
-            callbacks["on_scenario_audit"] = display.on_scenario_audit
-        if show:
-            callbacks["on_scenario_start"] = display.on_scenario_start
-            callbacks["on_scenario_result"] = display.on_scenario_result
-            callbacks["rate_limit_observer"] = display.on_rate_limit
-        return await service.run_benchmark(
-            **request.service_kwargs(),
-            throughput_samples=throughput_samples or [],
-            **callbacks,
-        )
-
-    async def run_all_trials() -> None:
-        """Run all trials in a single event loop for connection reuse."""
-        request = ScoredRun.from_args(
-            args,
-            model=model,
-            backend=backend,
-            base_url=base_url,
-            api_key=api_key,
-            wire_format=wire_format,
-            scenarios=scenarios,
-            extra_params=extra_params,
-            scenario_packs=_pack_attestations(args),
-            context_pressure_messages=context_pressure_messages,
-            context_pressure_config=context_pressure_config,
-            run_context=run_context,
-        )
-        result = await run_trial(request, show=True)
-        trial_results = [result]
-
-        # When resuming, the service has already merged prior results into
-        # result["scores"].  Use that merged summary for display instead of
-        # re-scoring only the rerun subset from display.results (which would
-        # show an inflated score — e.g. 100% from 5/5 reruns when the full
-        # set was 50% on 35/69).
-        has_resume = bool(getattr(args, "_resume_prior_results", None))
-        merged = _score_stored_trial(result, args, scenarios) if has_resume else None
-
-        if merged is not None:
-            all_summaries.append(merged)
-            display.set_finished(merged, throughput_samples=throughput_samples)
-            _show_diff(console, merged.scenario_results, args)
-        else:
-            all_results = [display.results[s.id] for s in scenarios if s.id in display.results]
-            if all_results:
-                summary = score_results(
-                    all_results,
-                    scenarios,
-                    alpha=args.alpha,
-                    weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
-                )
-                all_summaries.append(summary)
-                display.set_finished(summary, throughput_samples=throughput_samples)
-                _show_diff(console, all_results, args)
-            else:
-                display.stop()
-
-        # Print report path
-        report_path = result.get("report_path")
-        report_paths: list[str] = []
-        if report_path:
-            console.print(f"\n  [dim]📄 Full report: {escape(str(report_path))}[/]\n")
-            report_paths.append(str(report_path))
-
-        # --- Trials 2..N: silent runs (same event loop) ---
-        if trials > 1:
-            later = request.later_trial()
-            for t in range(2, trials + 1):
-                console.print(f"  [dim]Running trial {t}/{trials}\u2026[/]", end=" ")
-                trial_result = await run_trial(later, show=False)
-                trial_results.append(trial_result)
-
-                # Collect report path
-                trial_rp = trial_result.get("report_path")
-                if trial_rp:
-                    report_paths.append(str(trial_rp))
-
-                trial_summary = _score_stored_trial(trial_result, args, scenarios)
-                if trial_summary is not None:
-                    all_summaries.append(trial_summary)
-                    if trial_summary.final_score is None:
-                        console.print("[bold yellow]Withheld[/]")
-                    else:
-                        console.print(f"[bold]{trial_summary.final_score}[/]/100")
-
-            agg = _aggregate_trials(all_summaries)
-            _print_trials_summary(console, agg)
-
-            # Write consolidated summary report
-            if agg and len(all_summaries) > 1:
-                reporter = MarkdownReporter(root=args.output_dir)
-                run_id_base = result.get("run_id", "summary")
-                protocol_scenarios = getattr(args, "_resume_scenarios", None) or scenarios
-                summary_path = reporter.write_summary_report(
-                    run_id=run_id_base,
-                    model=_report_model_label(display_name, args),
-                    summaries=all_summaries,
-                    agg=agg,
-                    throughput_samples=throughput_samples,
-                    report_paths=report_paths,
-                    run_context=run_context,
-                    scenario_metadata=scenario_report_metadata(protocol_scenarios),
-                    scenario_packs=_pack_attestations(args),
-                )
-                console.print(f"  [dim]📊 Summary report: {escape(str(summary_path))}[/]\n")
-        if _trials_safety_gate_failed(args, trial_results):
-            raise SystemExit(2)
-
-    try:
-        asyncio.run(run_all_trials())
-    except KeyboardInterrupt:
-        display.stop()
-        console.print("\n[bold red]Interrupted.[/]")
-        sys.exit(1)
-    except Exception as exc:
-        display.stop()
-        detail = _redact_urls(str(exc)) if args.redact_url else str(exc)
-        console.print(f"\n[bold red]Error: {escape(detail)}[/]")
-        sys.exit(1)
-
-
-# ---------------------------------------------------------------------------
-# JSONL progress callbacks for headless mode (sparkrun integration)
-# ---------------------------------------------------------------------------
-
-
-def _run_json(
-    service: BenchmarkService,
-    model: str,
-    backend: str,
-    base_url: str,
-    api_key: str | None,
-    args: argparse.Namespace,
-    *,
-    throughput_samples: list | None = None,
-    extra_params: dict[str, Any] | None = None,
-    context_pressure_messages: list[ChatMessage] | None = None,
-    context_pressure_config: dict | None = None,
-    run_context: Any | None = None,
-    wire_format: str = "openai",
-) -> None:
-    """Run and output raw JSON (with optional JSONL progress on stderr)."""
-    trials = max(1, args.trials)
-    resolved = _execution_scenarios(args)
-    json_file = getattr(args, "json_file", None)
-    held_out = _held_out_ids(args)
-    on_start = (
-        _stderr_progress_start_unredacted
-        if getattr(args, "include_held_out", False)
-        else _stderr_progress_start
-    )
-
-    async def run(request: ScoredRun) -> dict:
-        return await service.run_benchmark(
-            **request.service_kwargs(),
-            throughput_samples=throughput_samples or [],
-            on_scenario_start=on_start,
-            on_scenario_result=_stderr_progress_result,
-            on_scenario_audit=_stderr_progress_audit,
-        )
-
-    try:
-        request = ScoredRun.from_args(
-            args,
-            model=model,
-            backend=backend,
-            base_url=base_url,
-            api_key=api_key,
-            wire_format=wire_format,
-            scenarios=resolved,
-            extra_params=extra_params,
-            scenario_packs=_pack_attestations(args),
-            context_pressure_messages=context_pressure_messages,
-            context_pressure_config=context_pressure_config,
-            run_context=run_context,
-        )
-        results = [asyncio.run(run(request))]
-        later = request.later_trial()
-        for _t in range(1, trials):
-            results.append(asyncio.run(run(later)))
-    except KeyboardInterrupt:
-        emit_run_failed("interrupted")
-        sys.exit(1)
-    except Exception as exc:
-        # Shareable output like a report, so a quoted request URL is redacted.
-        message = _redact_urls(str(exc))
-        # The error envelope predates run_failed and stays for consumers that
-        # read it; the event is what the documented error contract promises,
-        # so it is emitted even when the envelope cannot be written.
-        try:
-            _emit_json_output({"error": message}, json_file=json_file, failed=True)
-        except Exception as write_exc:
-            message = f"{message} (and the --json-file could not be written: {write_exc})"
-        emit_run_failed(message)
-        sys.exit(1)
-
-    if trials == 1:
-        _emit_json_output(_redact_run(results[0], held_out), json_file=json_file)
-    else:
-        # Aggregate trial data
-        scored = (_score_stored_trial(r, args, resolved) for r in results)
-        summaries = [summary for summary in scored if summary is not None]
-
-        agg = _aggregate_trials(summaries) if summaries else {}
-        output = results[-1]  # last run as the primary result
-        if agg:
-            output["trial_statistics"] = agg
-        # The envelope's top-level safety_warnings and safety_gate are what
-        # consumers check, so they cover every trial; scores.safety_warnings
-        # stays the last trial's.
-        union = _trial_safety_warnings(results)
-        output["safety_warnings"] = union
-        output["safety_gate"] = {"passed": not union, "warnings": union}
-        _emit_json_output(_redact_run(output, held_out), json_file=json_file)
-    if _trials_safety_gate_failed(args, results):
-        raise SystemExit(2)
-
-
-def _run_plain(
-    service: BenchmarkService,
-    console: Console,
-    model: str,
-    display_name: str,
-    backend: str,
-    base_url: str,
-    api_key: str | None,
-    args: argparse.Namespace,
-    *,
-    throughput_samples: list | None = None,
-    extra_params: dict[str, Any] | None = None,
-    context_pressure_messages: list[ChatMessage] | None = None,
-    context_pressure_config: dict | None = None,
-    display_url: str | None = None,
-    run_context: Any | None = None,
-    wire_format: str = "openai",
-) -> None:
-    """Run with simple line-by-line output."""
-    console.print(f"\n[bold]Tool-Call Benchmark[/] — {escape(display_name)}")
-    console.print(
-        f"[dim]  Backend: {escape(backend)}  |  Server: {escape(str(display_url or base_url))}[/]\n"
-    )
-
-    resolved = _execution_scenarios(args)
-
-    trials = max(1, args.trials)
-    started = time.time()
-
-    async def run(request: ScoredRun, *, show: bool = False) -> dict:
-        callbacks: dict = {}
-        if request.audits_answers:
-            callbacks["on_scenario_audit"] = _plain_on_audit
-        if show and args.parallel > 1:
-            callbacks["on_scenario_result"] = _plain_on_parallel_result
-        elif show:
-            callbacks["on_scenario_start"] = _plain_on_start
-            callbacks["on_scenario_result"] = _plain_on_result
-        return await service.run_benchmark(
-            **request.service_kwargs(),
-            throughput_samples=throughput_samples or [],
-            **callbacks,
-        )
-
-    try:
-        request = ScoredRun.from_args(
-            args,
-            model=model,
-            backend=backend,
-            base_url=base_url,
-            api_key=api_key,
-            wire_format=wire_format,
-            scenarios=resolved,
-            extra_params=extra_params,
-            scenario_packs=_pack_attestations(args),
-            context_pressure_messages=context_pressure_messages,
-            context_pressure_config=context_pressure_config,
-            run_context=run_context,
-        )
-        all_results_dicts = [asyncio.run(run(request, show=True))]
-        later = request.later_trial()
-        for t in range(2, trials + 1):
-            console.print(f"\n[dim]  --- Trial {t}/{trials} ---[/]\n")
-            all_results_dicts.append(asyncio.run(run(later, show=True)))
-    except KeyboardInterrupt:
-        console.print("\n[bold red]Interrupted.[/]")
-        sys.exit(1)
-    except Exception as exc:
-        detail = _redact_urls(str(exc)) if args.redact_url else str(exc)
-        console.print(f"\n[bold red]Error: {escape(detail)}[/]")
-        sys.exit(1)
-
-    elapsed = time.time() - started
-    scores = all_results_dicts[-1].get("scores", {})
-    final_score = scores.get("final_score")
-    score_display = "Withheld" if final_score is None else f"{final_score} / 100"
-    console.print(f"\n[bold]Score: {score_display}  — {scores.get('rating', '')}[/]")
-    if scores.get("weighted_score") is not None:
-        console.print(
-            f"[bold]Weighted Score: {scores['weighted_score']} / 100[/]  [dim](difficulty-weighted)[/]"
-        )
-    excluded = scores.get("excluded_scenarios") or []
-    if excluded:
-        console.print(
-            f"[yellow]{len(excluded)} scenario(s) excluded from scoring: "
-            f"{escape(', '.join(excluded))}; "
-            f"completion rate {scores.get('completion_rate', 100.0)}%[/]"
-        )
-    console.print(f"[dim]Completed in {elapsed:.1f}s[/]\n")
-    if getattr(args, "diff", None):
-        # The diff follows the score above, so it compares the same (last) trial.
-        _show_diff(
-            console,
-            [ScenarioResult.from_dict(r) for r in scores.get("scenario_results") or []],
-            args,
-        )
-
-    # Show trial statistics if multiple trials
-    if trials > 1:
-        scored = (_score_stored_trial(r, args, resolved) for r in all_results_dicts)
-        summaries = [summary for summary in scored if summary is not None]
-        agg = _aggregate_trials(summaries) if summaries else {}
-        _print_trials_summary(console, agg)
-
-        if agg and len(summaries) > 1:
-            reporter = MarkdownReporter(root=args.output_dir)
-            run_id_base = (
-                all_results_dicts[0].get("run_id", "summary") if all_results_dicts else "summary"
-            )
-            rp_list = [
-                str(r.get("report_path", "")) for r in all_results_dicts if r.get("report_path")
-            ]
-            protocol_scenarios = getattr(args, "_resume_scenarios", None) or resolved
-            summary_path = reporter.write_summary_report(
-                run_id=run_id_base,
-                model=_report_model_label(display_name, args),
-                summaries=summaries,
-                agg=agg,
-                throughput_samples=throughput_samples,
-                report_paths=rp_list,
-                run_context=run_context,
-                scenario_metadata=scenario_report_metadata(protocol_scenarios),
-                scenario_packs=_pack_attestations(args),
-            )
-            console.print(f"  [dim]📊 Summary report: {escape(str(summary_path))}[/]\n")
-    if _trials_safety_gate_failed(args, all_results_dicts):
-        raise SystemExit(2)
 
 
 if __name__ == "__main__":

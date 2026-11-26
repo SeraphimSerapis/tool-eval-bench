@@ -1190,7 +1190,7 @@ class TestWebComparePairedStatsAndDomSafety:
             / "tool_eval_bench"
             / "web"
             / "static"
-            / "app.js"
+            / "compare.js"
         )
         source = js_path.read_text(encoding="utf-8")
         assert "innerHTML" not in source

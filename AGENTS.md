@@ -1,162 +1,144 @@
 # AGENTS.md
 
-This file defines project-local conventions for all files in this repo.
+Single-assistant deterministic tool-call benchmark covering 104 scenarios in total across 16
+categories: 69 standard deterministic scenarios (TC-01 to TC-69, categories A-O) plus 35 Hard Mode
+scenarios (TC-70 to TC-104, category P, opt-in via `--hardmode`, `--hardmode-only`, or explicit
+`--scenarios` IDs). Also runs throughput, speculative-decoding, and context-pressure modes plus 6
+plugins (`decision`, `gsm8k`, `ifeval`, `mmlu`, `needle`, `toolscale`).
 
-## Mission
+## Architecture and context pointers
 
-Build and evolve a local benchmark platform that evaluates **LLM quality** for agentic multi-agent systems. The core benchmark uses deterministic scenarios with mock tools, multi-turn conversation loops, and 3-tier scoring (pass/partial/fail). A pluggable architecture allows adding external benchmarks (GSM8K, MMLU, IFEval, future HumanEval, etc.) alongside the tool-call evaluation.
+`tests/test_architecture_boundaries.py` enforces these recursive layer import rules:
 
-Primary focus:
-1. **Tool-use effectiveness** — 69 standard scenarios plus 35 opt-in Hard Mode scenarios across 16 categories
-2. **Multi-turn orchestration** — chained reasoning, conditional branching, error recovery
-3. **Throughput benchmarking** — llama-bench style pp/tg measurement with depth/concurrency sweeps
-4. **Pluggable benchmarks** — external accuracy benchmarks (GSM8K, MMLU, IFEval) via `BenchmarkPlugin` interface
+| Layer | Allowed internal imports | Module layout notes |
+|---|---|---|
+| `domain` | `domain` | Core types, `engines.py`, `rubric.py`, `redaction.py`. |
+| `evals`, `plugins`, `storage`, `utils` | `domain` (+ self) | `evals/helpers/` splits shared helpers; `storage/reports/card/_*` renders card panels; `plugins/toolscale/{plugin,aggregate,report}.py` separates orchestration, aggregation, and rendering. |
+| `adapters` | `domain`, `utils` | Wire adapters for OpenAI-compatible, native Gemini, and native Anthropic APIs. |
+| `runner` | `domain`, `evals`, `utils` | `runner/orchestrator/` owns scenario loop, probes, scoring, review hooks, and wire helpers; `runner/spec_detection.py` imports no other `runner` module; `runner/throughput.py` stays decoupled from `runner/speculative.py`; `runner/service.py` is the sole allowlisted compatibility re-export of `application.service`. |
+| `application` | `adapters`, `domain`, `evals`, `runner`, `storage`, `utils` | Composes adapters, orchestration, finalization, queries, deletion, and leaderboards. |
+| `cli`, `web` | Delivery layers (`FORBIDDEN_MODULES` bars `storage.db`) | `cli/dispatch.py` and sibling CLI phase modules plus `web/` route all DB reads and deletes through `application/run_queries.py` and `application/run_deletion.py`; `storage.reports` rendering is allowed. |
 
-The public scenario registry covers TC-01 through TC-69. Category P adds TC-70 through TC-104.
-`--hardmode` includes Category P, `--hardmode-only` selects it alone, and explicit IDs passed to
-`--scenarios` can select Hard Mode scenarios without the flag.
+Context pointers (read the target before editing that branch):
 
-The `tool-eval-bench` CLI is the primary interface. A public Python API supports headless
-integrations, and an optional local web UI (`tool-eval-bench serve`, installed with the `[web]`
-extra) provides browser-based run inspection, cohort leaderboards, comparisons, live SSE
-observation, and run launching.
+- **Scenarios or evaluators:** `docs/adding-a-scenario.md`
+- **Benchmark plugins:** `docs/adding-a-plugin.md`
+- **Inference engines or wire adapters:** `src/tool_eval_bench/domain/engines.py`,
+  `docs/adding-an-adapter.md`, `docs/backends.md`
+- **Full module map and data flow:** `docs/architecture.md`
+- **Contributor setup and release workflow:** `CONTRIBUTING.md`, `changelog.d/README.md`
 
-## Architectural guardrails
+## Non-obvious contracts
 
-- Keep a strict layered architecture:
-  - `domain` must not import storage adapters. Defines core types (`ScenarioDefinition`, `BenchmarkPlugin`).
-  - `evals` depends on domain types, not concrete server logic.
-  - `runner` orchestrates scenarios using adapter interfaces.
-  - `plugins` contains pluggable benchmark modules (GSM8K, MMLU, IFEval). Each plugin implements `domain.plugin.BenchmarkPlugin` and owns its own orchestration.
-  - `application` composes concrete adapters, orchestration, storage, and reporting.
-  - `cli` and `web` are the delivery layers that call `application.service`, `application.run_queries`, and plugin runners.
-    `runner.service` remains a compatibility re-export only.
-  - `cli` and `web` MUST NOT import `storage.db`. They may format reports through `storage.reports`, which is
-    a renderer. Database reads go through `application.run_queries`, which owns each repository's
-    lifetime; `tests/test_architecture_boundaries.py` enforces this.
-- Prefer composition over global state.
-- Keep adapters backend-specific and pluggable. OpenAI-compatible backends use the OpenAI wire
-  format; Gemini and Anthropic also have native adapters and wire formats.
-- Scenarios are self-contained: one file per scenario at `evals/scenarios/<group>/tcNN.py`,
-  exporting `SCENARIO` and `DISPLAY`. The group package discovers its own files, so creating the
-  file is the whole registration; there is no list to append to. Helpers shared inside a group live
-  in that group's `_shared.py`. Never import one scenario module from another: several groups
-  define helpers under the same name with deliberately different behaviour. See
-  `docs/adding-a-scenario.md`.
-- Plugins are self-contained: each owns its dataset loading, evaluation logic, and report rendering. Shared infrastructure (adapter, storage) lives outside plugins.
+- **Self-contained scenarios.** Place each scenario in `evals/scenarios/<group>/tcNN.py` exporting
+  `SCENARIO`, `DISPLAY`, and `difficulty` (1 to 5); group packages auto-discover files
+  (`tests/test_scenario_registry.py`). Share group helpers in that group's `_shared.py`, keeping
+  scenario modules isolated from sibling scenario modules because identical helper names carry
+  different semantics across groups.
+- **Persisted run config.** Declare every persisted run key once in `application/run_config.py`
+  (`RUN_CONFIG_FIELDS`) with explicit presence, fingerprint, cohort, and resume rules
+  (`tests/test_run_config_schema.py`).
+- **CLI arguments and schema snapshots.** Register public commands in `cli/command_registry.py`
+  and mirror every public parser flag in `schema.py` (`ARGS_SCHEMA`, bump `SCHEMA_VERSION`), then
+  regenerate snapshots with `.venv/bin/python scripts/update_compat_snapshots.py`
+  (`tests/test_api.py`).
+- **Persistence order and redaction.** Write the Markdown report (`runs/YYYY/MM/`) before
+  committing SQLite (`application/finalization.py`, `application/mode_runs.py`). Redact URLs and
+  secrets via `domain/redaction.py`. Withhold held-out `--scenario-pack` titles, summaries, and
+  traces from Markdown, JSON, and web responses while keeping full traces in SQLite.
+- **Web static ES modules.** Register every `web/static/*.js` file in `_STATIC_MIME_TYPES` in
+  `web/app.py`, use native ES module imports, and construct DOM nodes programmatically with zero
+  HTML sinks (`innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`; enforced by
+  `tests/test_web_history.py` and `tests/test_web_security.py`).
+- **Documented counts.** `tests/test_documented_counts.py` asserts exact scenario and category
+  counts in `README.md`, `AGENTS.md`, and `docs/cli-reference.md`.
 
-## Storage and reporting rules
+## Rubric AST gate (`src/tool_eval_bench/domain/rubric.py`)
 
-- Every completed run MUST be persisted to SQLite.
-- Every completed run MUST also produce a Markdown artifact under `runs/YYYY/MM/`.
-- Run IDs use a UTC timestamp + short nonce-backed hash for unique execution identity.
-- Comparable run configurations use a separate deterministic `config_fingerprint`.
-- Markdown reports MUST include full traces for every scenario, except
-  scenarios loaded from a held-out `--scenario-pack`. Those keep status and
-  points in the report but withhold titles, summaries, and traces so publishing
-  a score does not publish (and burn) the pack. Full traces remain in SQLite.
+`tests/test_rubric_cohorts.py::test_rubric_ast_fingerprint_matches_source` hashes the
+docstring-stripped normalized AST of all `evals/**/*.py` and `runner/orchestrator/**/*.py` files
+against `RUBRIC_AST_FINGERPRINT`. Docstring, comment, and whitespace edits leave the digest
+unchanged.
 
-## Compatibility targets
+- **Verdict-changing edit** (scoring logic, prompts, translations, or noise injection): bump
+  `EVAL_RUBRIC_VERSION`, `LOCALE_VERSION` (single source of truth in `domain/rubric.py`, imported
+  as `int` by `evals/locales/__init__.py`), or `NOISE_VERSION`, then refresh
+  `RUBRIC_AST_FINGERPRINT` from `compute_rubric_ast_fingerprint()`.
+- **Strictly verdict-preserving refactor** (renames, helper extraction, typing): refresh
+  `RUBRIC_AST_FINGERPRINT` only and explain why verdicts stay unchanged in the PR description.
 
-- vLLM, SGLang, LiteLLM, and llama.cpp are supported via OpenAI-compatible endpoints. Gemini is
-  supported through its native API as well as its OpenAI-compatible endpoint. Anthropic is
-  supported through the native Messages API (`/v1/messages`), which also covers gateways that
-  front other models with it, such as OpenCode Zen.
-- Any server exposing `/v1/chat/completions` with `tools` support should work.
-- Non-tool benchmarks (GSM8K, MMLU, IFEval) only require chat-completion support; `tools` support
-  is not needed.
+Leaderboard cohorts group runs on these three rubric versions rather than unrelated commits, so
+treat version bumps as deliberate comparability boundaries.
 
-## Quality bar
+## Testing discipline
 
-Before claiming completion:
+- **Test behavior through public seams.** Drive scenarios via `SCENARIO.handle_tool_call` and
+  `SCENARIO.evaluate` (or `tests/scenario_replay.py::replay()`, or `simulate_results()` from
+  `tests/conftest.py`), adapters via deterministic `httpx` mock transports, and CLI/web/storage
+  through public entry points. Assert observable verdicts, persisted state, and wire payloads
+  rather than private helper internals.
+- **Own the subsystem's test file.** Put regression tests in the subsystem's existing test module
+  (for example `tests/test_orchestrator.py`, `tests/test_evaluators_*.py`,
+  `tests/test_adapter.py`). Keep catch-all PR, audit, and coverage-gap files out of `tests/`.
+- **Keep cases minimal and non-redundant.** Cover pass, meaningful partial, failure/false-positive,
+  and the exact regression input using `@pytest.mark.parametrize` for variants. Skip tautological
+  constant, dataclass, or stdlib checks and mock-echo tests.
+- **Meet coverage floors cleanly.** CI enforces 80% total branch coverage (`pyproject.toml`), 30
+  per-module floors in `scripts/check_module_coverage.py` (70% to 95%), and 95% on
+  `runner/llama_benchy.py` (`.coveragerc.perf`). Close coverage gaps by testing real failure modes
+  and edge cases through public entry points or deleting unreachable dead code rather than padding
+  assertions.
+- **Keep tests tight, deterministic, and cross-platform.** Replace wall-clock sleeps with
+  `threading.Event` or mocked clocks. Mock HTTP deterministically (mark live-server tests
+  `@pytest.mark.live`; turn 1 streams SSE, so local HTTP mocks must handle `stream: true`). Pass
+  explicit `encoding="utf-8"` on file I/O (Windows defaults to `cp1252`), use `spawn` for
+  multiprocessing, and keep tests order-independent (PRs run seed `104729`; post-merge
+  `test-extended` runs Python 3.11 and Windows with different seeds). Respect the two AST-enforced
+  bans (`tests/test_architecture_boundaries.py`): keep `httpx.AsyncClient` unpatched at class
+  level, and use public `argparse` attributes (`Action.const`) instead of private `argparse._*`
+  classes.
 
-1. `ruff check .`
-2. `ruff format --check .`
-3. `.venv/bin/mypy`
-4. `.venv/bin/python -m pytest tests/ --ignore=tests/test_llama_benchy.py -m "not live" --randomly-seed=104729`
+## Quality bar and environment traps
 
-A pull request runs the suite once, on Python 3.13 with seed `104729`, and
-enforces the branch-coverage floor plus the per-module floors. Python 3.11 and
-Windows run after merge, in `test-extended`, each with a different seed.
-
-**Pre-commit hooks** enforce both checks automatically:
+Run every Python check with `.venv/bin/...` rather than system Python (system Python silently skips
+`pytest-asyncio` tests):
 
 ```bash
-pip install -e '.[dev]'       # includes pre-commit
-pre-commit install            # pre-commit, pre-push, and post-checkout hooks
+.venv/bin/ruff check .
+.venv/bin/ruff format --check .
+.venv/bin/mypy
+for f in src/tool_eval_bench/web/static/*.js; do node --check "$f" || exit 1; done
+env -u FORCE_COLOR .venv/bin/python -m pytest tests/ \
+  --ignore=tests/test_llama_benchy.py -m "not live" \
+  --randomly-seed=104729 --cov=tool_eval_bench --cov-report=json --cov-fail-under=80
+.venv/bin/python scripts/check_module_coverage.py coverage.json
 ```
 
-The post-checkout hook links the primary checkout's `.venv` into newly created
-Git worktrees. Re-run `pre-commit install` once after upgrading from an older
-checkout so the new hook type is installed.
+- Add `-n auto --maxprocesses=4` during local iteration, then run serially for coverage parity.
+  Always include `tests/test_adapter.py` (deterministic `httpx` mocks, no live server).
+- When editing `runner/llama_benchy.py` (requires `[perf]`):
 
-**Always use the project venv** (`.venv/bin/python`), not system Python.
-Dev dependencies like `pytest-asyncio` are installed in the venv via `pip install -e '.[dev]'`.
-The `[hf]` optional group (`pip install -e '.[hf]'`) installs the `datasets` library
-for rate-limit-free HuggingFace downloads.
-Running with system Python silently skips all `@pytest.mark.asyncio` tests, giving
-a false sense of coverage.
+```bash
+env -u FORCE_COLOR .venv/bin/python -m pytest \
+  tests/test_llama_benchy.py tests/test_llama_benchy_redaction.py \
+  -m "not live" --randomly-seed=181081 \
+  --cov=tool_eval_bench.runner.llama_benchy --cov-config=.coveragerc.perf --cov-fail-under=95
+```
 
-Tests that require the `llama-benchy` package (`test_llama_benchy.py`) should be
-excluded from the default run unless the `[perf]` optional group is installed.
-CI installs `[dev,perf]` in the `test` job and covers them in a second step,
-gated at 95% against `.coveragerc.perf`. That config exists because the
-project's coverage settings omit `runner/llama_benchy.py`, which is unreachable
-without the extra.
+- When changing dependencies in `pyproject.toml`, update `uv.lock` and verify with `uv lock --check`.
+- **Environment traps.** Unset `FORCE_COLOR` for `pytest` because `rich` treats even `FORCE_COLOR=0`
+  as a forced terminal and breaks `StringIO` assertions. Keep `[hf]` (`datasets`) uninstalled for
+  `mypy` because `datasets` triggers `import-untyped` errors against the CI
+  `type: ignore[import-not-found]` annotations.
 
-Note: `test_adapter.py` uses deterministic httpx mocks and does **not** require
-a live inference server — it must be included in all test runs.
+## PR policy, commits, and changelog fragments
 
-## Git conventions
-
-- When a commit fixes a GitHub issue, the commit message **MUST** reference it
-  with a `Closes #N` trailer (or `Fixes #N`) so the issue auto-closes on push.
-- Use the issue number in the subject line too, e.g.:
-  `fix: resolve reports path inside .venv (#9)`
-
-## Documentation requirements
-
-When changing architecture or API behavior, update:
-
-- `README.md`
-- a `changelog.d/` fragment
-
-`CHANGELOG.md` is generated by towncrier and is never edited directly. Record a notable change by
-adding a fragment under `changelog.d/` (`<issue>.<type>.md`, or `+<slug>.<type>.md` when there is no
-issue number). Types: `added`, `changed`, `fixed`, `removed`, `security`.
-See `changelog.d/README.md`. Editing `CHANGELOG.md` by hand is what made every parallel
-branch conflict on the same lines.
-
-## Cursor Cloud specific instructions
-
-The VM comes with the project venv at `.venv` (created by the startup update
-script, which runs `pip install -e '.[dev,perf]'`). Always use `.venv/bin/...`
-as documented in the Quality bar section. Lint/type/test/run commands are
-unchanged from the Quality bar and `docs/cli-reference.md`; the notes below only cover
-non-obvious environment caveats.
-
-- **`pytest` needs `FORCE_COLOR` unset.** This VM's shell exports
-  `FORCE_COLOR=0` and `TERM=dumb`. `rich` treats the *presence* of
-  `FORCE_COLOR` (even `0`) as "force terminal", so its `StringIO`-based
-  rendering tests emit ANSI codes and hardcode width 80, breaking ~6 tests in
-  `tests/test_history.py`, `tests/test_leaderboard_display.py`, and
-  `tests/test_spec_live.py`. Run the suite with `FORCE_COLOR` removed, e.g.
-  `env -u FORCE_COLOR .venv/bin/python -m pytest ...`. `ruff` and `mypy` are
-  unaffected. This is purely an env quirk (not a `rich` version issue) — the
-  tests pass in CI where `FORCE_COLOR` is unset.
-- **Do NOT install the `[hf]` extra for the quality bar.** Installing
-  `datasets` (via `.[hf]`) makes `mypy` fail with 3 `import-untyped` errors in
-  `plugins/hf_utils.py` and `cli/plugin_runners.py` (the code's
-  `type: ignore[import-not-found]` comments only match when `datasets` is
-  absent, as in CI). Only add `[hf]` when actively working on GSM8K/MMLU/IFEval
-  plugins, and expect that mypy noise while it is installed.
-- **No live LLM server runs in this environment.** Commands that hit the model
-  (`run`, `probe`, `plugin`, `resume`, `bench` with scenarios/perf/spec) need a
-  reachable OpenAI-compatible `/v1/chat/completions` endpoint. Without one, use
-  `tool-eval-bench run --dry-run` (no server) or point `--base-url` at a local
-  mock server that implements `GET /v1/models` and `POST /v1/chat/completions`
-  (the first turn is streamed, so a mock MUST support `stream: true` SSE or the
-  adapter parses zero tool calls).
-- **Run artifacts are gitignored:** `data/benchmarks.sqlite` (SQLite) and
-  `runs/YYYY/MM/*.md` (Markdown reports) are written on every completed run and
-  read back by `history`/`leaderboard`/`compare`/`export`.
+- **Automated PR gate (`scripts/check_contribution.py`).** Any `src/**/*.py` edit requires a
+  `tests/**` change. Any runtime or packaging edit (`src/**`, `pyproject.toml`, `uv.lock`,
+  `Dockerfile`, `compose.yaml`, `docker-compose.yml`, `docker-compose.yaml`, `.env.example`,
+  `MANIFEST.in`) requires a nonempty `changelog.d/<issue-or-+slug>.<type>.md` fragment (`added`,
+  `changed`, `fixed`, `removed`, `security`) or a visible edit to an unreleased fragment. Leave
+  `CHANGELOG.md` untouched (towncrier-generated).
+- **Commits.** Reference fixed GitHub issues in both subject (`(#N)`) and trailer (`Closes #N`).
+- **Durable docs.** Update `README.md` for user-facing CLI or API changes, and log
+  costly-to-reverse architectural decisions in `docs/decisions.md`.

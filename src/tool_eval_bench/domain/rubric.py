@@ -4,7 +4,7 @@ Leaderboard cohorts group runs by ``EVAL_RUBRIC_VERSION``, ``LOCALE_VERSION``,
 and ``NOISE_VERSION`` instead of unrelated commits or package versions.
 
 Updating ``RUBRIC_AST_FINGERPRINT``:
-- When a change under ``evals/`` or ``runner/orchestrator.py`` alters scoring
+- When a change under ``evals/`` or ``runner/orchestrator/`` alters scoring
   verdicts, localized prompts, or noise injection, bump the relevant version
   constant (``EVAL_RUBRIC_VERSION``, ``LOCALE_VERSION``, or ``NOISE_VERSION``)
   and refresh ``RUBRIC_AST_FINGERPRINT``.
@@ -22,13 +22,13 @@ import hashlib
 from pathlib import Path
 
 EVAL_RUBRIC_VERSION: str = "1"
-LOCALE_VERSION: str = "1"
+LOCALE_VERSION: str = "2"
 NOISE_VERSION: str = "1"
 
 # Pinned 16-hex SHA-256 digest of normalized ASTs across ``evals/**/*.py`` and
-# ``runner/orchestrator.py``. Verified in CI by
+# ``runner/orchestrator/**/*.py``. Verified in CI by
 # ``tests/test_rubric_cohorts.py::test_rubric_ast_fingerprint_matches_source``.
-RUBRIC_AST_FINGERPRINT: str = "e611bd4823bf43a5"
+RUBRIC_AST_FINGERPRINT: str = "e7ebfafbb82fcfdc"
 
 _DOCSTRING_OWNERS = (
     ast.Module,
@@ -86,21 +86,33 @@ def _rubric_source_paths(package_root: Path) -> list[Path]:
     if not evals_dir.is_dir():
         raise FileNotFoundError(f"Expected evals directory at {evals_dir}")
 
-    orchestrator_path = package_root / "runner" / "orchestrator.py"
-    if not orchestrator_path.is_file():
-        raise FileNotFoundError(f"Expected orchestrator module at {orchestrator_path}")
+    orchestrator_dir = package_root / "runner" / "orchestrator"
+    orchestrator_file = package_root / "runner" / "orchestrator.py"
+    if orchestrator_dir.is_dir():
+        orchestrator_paths = sorted(orchestrator_dir.rglob("*.py"))
+        if not orchestrator_paths:
+            raise FileNotFoundError(
+                f"Expected orchestrator package modules under {orchestrator_dir}"
+            )
+    elif orchestrator_file.is_file():
+        orchestrator_paths = [orchestrator_file]
+    else:
+        raise FileNotFoundError(
+            f"Expected orchestrator package at {orchestrator_dir} or module at {orchestrator_file}"
+        )
 
-    paths = [*evals_dir.rglob("*.py"), orchestrator_path]
+    paths = [*evals_dir.rglob("*.py"), *orchestrator_paths]
     return sorted(paths, key=lambda p: p.relative_to(package_root).as_posix())
 
 
 def compute_rubric_ast_fingerprint(package_root: Path | None = None) -> str:
     """Compute a deterministic 16-hex SHA-256 digest of scoring and orchestration ASTs.
 
-    Walks every ``.py`` file under ``evals/`` plus ``runner/orchestrator.py``,
-    parses each file into an AST, strips module/class/function docstrings so
-    comment, whitespace, and docstring edits never alter the digest, and hashes
-    the normalized AST dump keyed by POSIX relative path.
+    Walks every ``.py`` file under ``evals/`` plus ``runner/orchestrator/``
+    (or legacy ``runner/orchestrator.py``), parses each file into an AST,
+    strips module/class/function docstrings so comment, whitespace, and
+    docstring edits never alter the digest, and hashes the normalized AST dump
+    keyed by POSIX relative path.
     """
     root = (
         Path(package_root).resolve()

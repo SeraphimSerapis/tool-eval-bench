@@ -9,6 +9,7 @@ from __future__ import annotations
 from io import StringIO
 from unittest.mock import MagicMock
 
+import pytest
 from rich.console import Console
 
 from tool_eval_bench.cli.display import (
@@ -387,39 +388,12 @@ class TestPrintFinalReport:
 
 
 # ===========================================================================
-# STATUS_LABELS
-# ===========================================================================
-
-
-class TestStatusLabels:
-    """Tests for the STATUS_LABELS constant."""
-
-    def test_pass_label(self) -> None:
-        from tool_eval_bench.cli.display import STATUS_LABELS
-        from tool_eval_bench.domain.scenarios import ScenarioStatus
-
-        assert STATUS_LABELS[ScenarioStatus.PASS] == ("✅ PASS", "green")
-
-    def test_partial_label(self) -> None:
-        from tool_eval_bench.cli.display import STATUS_LABELS
-        from tool_eval_bench.domain.scenarios import ScenarioStatus
-
-        assert STATUS_LABELS[ScenarioStatus.PARTIAL] == ("⚠️  PARTIAL", "yellow")
-
-    def test_fail_label(self) -> None:
-        from tool_eval_bench.cli.display import STATUS_LABELS
-        from tool_eval_bench.domain.scenarios import ScenarioStatus
-
-        assert STATUS_LABELS[ScenarioStatus.FAIL] == ("❌ FAIL", "red")
-
-
-# ===========================================================================
 # CATEGORY_COLORS
 # ===========================================================================
 
 
 class TestCategoryColors:
-    """Tests for the CATEGORY_COLORS constant."""
+    """Tests for the CATEGORY_COLORS completeness invariant."""
 
     def test_all_categories_have_colors(self) -> None:
         from tool_eval_bench.cli.display import CATEGORY_COLORS
@@ -427,165 +401,6 @@ class TestCategoryColors:
 
         for cat in Category:
             assert cat in CATEGORY_COLORS
-
-    def test_specific_colors(self) -> None:
-        from tool_eval_bench.cli.display import CATEGORY_COLORS
-        from tool_eval_bench.domain.scenarios import Category
-
-        assert CATEGORY_COLORS[Category.A] == "cyan"
-        assert CATEGORY_COLORS[Category.K] == "bright_red"
-        assert CATEGORY_COLORS[Category.O] == "orchid1"
-
-
-# ===========================================================================
-# RATING_COLORS
-# ===========================================================================
-
-
-class TestRatingColors:
-    """Tests for the RATING_COLORS constant."""
-
-    def test_excellent_color(self) -> None:
-        from tool_eval_bench.cli.display import RATING_COLORS
-
-        assert RATING_COLORS["★★★★★ Excellent"] == "bold green"
-
-    def test_good_color(self) -> None:
-        from tool_eval_bench.cli.display import RATING_COLORS
-
-        assert RATING_COLORS["★★★★ Good"] == "bold cyan"
-
-    def test_adequate_color(self) -> None:
-        from tool_eval_bench.cli.display import RATING_COLORS
-
-        assert RATING_COLORS["★★★ Adequate"] == "bold yellow"
-
-    def test_safety_capped_color(self) -> None:
-        from tool_eval_bench.cli.display import RATING_COLORS
-
-        assert RATING_COLORS["★★★ Adequate (safety-capped)"] == "bold red"
-
-    def test_weak_color(self) -> None:
-        from tool_eval_bench.cli.display import RATING_COLORS
-
-        assert RATING_COLORS["★★ Weak"] == "bold red"
-
-    def test_poor_color(self) -> None:
-        from tool_eval_bench.cli.display import RATING_COLORS
-
-        assert RATING_COLORS["★ Poor"] == "bold red"
-
-
-# ===========================================================================
-# BenchmarkDisplay._format_result_line
-# ===========================================================================
-
-
-class TestFormatResultLine:
-    """Tests for the BenchmarkDisplay._format_result_line method."""
-
-    def _make_display(self) -> MagicMock:
-        """Create a MagicMock for BenchmarkDisplay with _format_result_line accessible."""
-
-        display = MagicMock(spec=BenchmarkDisplay)
-        display.scenarios = SCENARIOS
-        return display
-
-    def test_pass_result_shows_green(self) -> None:
-        display = self._make_display()
-
-        scenario = SCENARIOS[0]
-        result = ScenarioResult(
-            scenario_id="TC-01",
-            status=ScenarioStatus.PASS,
-            points=2,
-            summary="Correct tool selection.",
-            duration_seconds=5.3,
-            ttft_ms=45.0,
-            turn_count=1,
-        )
-
-        # Call the actual method
-        line = BenchmarkDisplay._format_result_line(display, scenario, result)
-
-        assert "TC-01" in line
-        assert "✅ PASS" in line
-        assert "2[/]/2" in line or "2/2" in line
-        assert "5.3s" in line
-        assert "45ms" in line
-
-    def test_fail_result_shows_red_and_summary(self) -> None:
-        display = self._make_display()
-
-        scenario = SCENARIOS[0]
-        result = ScenarioResult(
-            scenario_id="TC-01",
-            status=ScenarioStatus.FAIL,
-            points=0,
-            summary="Wrong tool called.",
-            duration_seconds=3.1,
-            ttft_ms=120.0,
-            turn_count=1,
-        )
-
-        line = BenchmarkDisplay._format_result_line(display, scenario, result)
-
-        assert "❌ FAIL" in line
-        assert "Wrong tool called" in line
-
-    def test_partial_result_shows_yellow(self) -> None:
-        display = self._make_display()
-
-        scenario = SCENARIOS[0]
-        result = ScenarioResult(
-            scenario_id="TC-01",
-            status=ScenarioStatus.PARTIAL,
-            points=1,
-            summary="Partial match.",
-            duration_seconds=4.0,
-            turn_count=1,
-        )
-
-        line = BenchmarkDisplay._format_result_line(display, scenario, result)
-
-        assert "⚠️  PARTIAL" in line
-        assert "1[/]/2" in line or "1/2" in line
-
-    def test_multi_turn_shows_turn_count(self) -> None:
-        display = self._make_display()
-
-        scenario = SCENARIOS[0]
-        result = ScenarioResult(
-            scenario_id="TC-01",
-            status=ScenarioStatus.PASS,
-            points=2,
-            summary="Correct.",
-            duration_seconds=10.0,
-            ttft_ms=50.0,
-            turn_count=3,
-        )
-
-        line = BenchmarkDisplay._format_result_line(display, scenario, result)
-
-        assert "t3" in line
-
-    def test_no_ttft_shows_no_latency(self) -> None:
-        display = self._make_display()
-
-        scenario = SCENARIOS[0]
-        result = ScenarioResult(
-            scenario_id="TC-01",
-            status=ScenarioStatus.PASS,
-            points=2,
-            summary="Correct.",
-            duration_seconds=5.0,
-            ttft_ms=None,
-            turn_count=1,
-        )
-
-        line = BenchmarkDisplay._format_result_line(display, scenario, result)
-
-        assert "ttft=" not in line
 
 
 # ===========================================================================
@@ -754,3 +569,394 @@ class TestPrintFinalReportThroughput:
         # The panel wraps the note, so match the phrase that stays on one line.
         assert "response chunk before the first content token" in output
         assert PP_ESTIMATED_NOTE.split(" llama-benchy", maxsplit=1)[0] in output
+
+
+# ===========================================================================
+# Markup escaping and interactive URL redaction
+# ===========================================================================
+
+
+def test_rich_markup_brackets_and_url_redaction_do_not_crash_or_leak(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    import json
+    from typing import Any
+
+    import httpx
+    import pytest
+
+    from tool_eval_bench.cli import model_probe, plugin_datasets, plugin_lifecycle, probe
+    from tool_eval_bench.cli.headless import HeadlessConsole
+    from tool_eval_bench.cli.plugin_progress import truncate
+
+    real_client = httpx.AsyncClient
+
+    # 1. plugin_progress.truncate escapes square-bracket markup tokens.
+    buf = StringIO()
+    console = Console(file=buf, width=120, no_color=True)
+    escaped = truncate("Wrap answer in [/] and [bold red]brackets[/]")
+    console.print(f"[dim italic]{escaped}[/]")
+    assert "[/]" in buf.getvalue()
+
+    # 2. plugin_lifecycle.execute_plugin survives unclosed [/] in both normal and HeadlessConsole.
+    def boom() -> Any:
+        async def _coro() -> None:
+            raise RuntimeError("bad bracket [/] from http://secret.internal:8000/v1")
+
+        return _coro()
+
+    with pytest.raises(SystemExit) as exc_plain:
+        plugin_lifecycle.execute_plugin(console, "GSM8K[/]", boom, [])
+    assert exc_plain.value.code == 1
+
+    with pytest.raises(SystemExit) as exc_json:
+        plugin_lifecycle.execute_plugin(HeadlessConsole(), "GSM8K[/]", boom, [])
+    assert exc_json.value.code == 1
+    headless_err = json.loads(capsys.readouterr().err.strip())
+    assert headless_err["error"] == "run_failed"
+    assert "secret.internal" not in headless_err["message"]
+
+    # 3. plugin_datasets.load_dataset_with_progress escapes [hf], name, noun, and exception text.
+    ds_buf = StringIO()
+    ds_console = Console(file=ds_buf, width=120, no_color=True)
+    items = plugin_datasets.load_dataset_with_progress(
+        ds_console,
+        name="IFEval[/]",
+        noun="prompts[/]",
+        cache_path=tmp_path / "missing.jsonl",
+        load=lambda **_kw: (_ for _ in ()).throw(RuntimeError("rate limit [/] [bad")),
+        cache_note="data/ifeval/test[/].jsonl",
+    )
+    assert items is None
+    assert "tool-eval-bench[hf]" in ds_buf.getvalue()
+    assert "rate limit [/]" in ds_buf.getvalue()
+
+    # 4. probe.preflight_model_check redacts secret URL in 500 body when display_url is masked.
+    def mock_500(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            500, text="upstream http://secret-upstream.internal:8000/v1 failed [/] [bad"
+        )
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(mock_500), **kw),
+    )
+    probe_buf = StringIO()
+    probe_console = Console(file=probe_buf, width=120, no_color=True)
+    with pytest.raises(SystemExit) as probe_exc:
+        probe.preflight_model_check(
+            probe_console,
+            "http://secret.internal:8000",
+            "model[/]",
+            None,
+            display_url="http://***:8000",
+        )
+    assert probe_exc.value.code == 3
+    assert "[/]" in probe_buf.getvalue()
+    assert "secret-upstream.internal" not in probe_buf.getvalue()
+
+    # 5. model_probe._detect_model redacts URL in non-JSON body when display_url is masked.
+    def mock_html(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/html"},
+            text="login at http://sso.secret.internal:8443/auth [/]",
+        )
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(mock_html), **kw),
+    )
+    mp_buf = StringIO()
+    mp_console = Console(file=mp_buf, width=160, no_color=True)
+    with pytest.raises(SystemExit) as mp_exc:
+        model_probe._detect_model(
+            "http://secret.internal:8000",
+            None,
+            mp_console,
+            display_url="http://***:8000",
+        )
+    assert mp_exc.value.code == 2
+    assert "sso.secret.internal" not in mp_buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_display_and_final_report_escape_dynamic_markup_and_preserve_title_padding() -> None:
+    from dataclasses import replace
+
+    from tool_eval_bench.domain.models import RunContext
+    from tool_eval_bench.domain.scenarios import CapabilityScore, FailureKind
+    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
+
+    tc01 = next(s for s in ALL_SCENARIOS if s.id == "TC-01")
+    tc02 = next(s for s in ALL_SCENARIOS if s.id == "TC-02")
+    sc_bracket = replace(tc01, title="Short [/] Title")
+    sc_plain = replace(tc02, title="Plain Title")
+
+    res_pass = ScenarioResult(
+        scenario_id=sc_bracket.id,
+        status=ScenarioStatus.PASS,
+        points=2,
+        summary="Passed with [/] and [bad token",
+        duration_seconds=1.1,
+    )
+    res_plain = ScenarioResult(
+        scenario_id=sc_plain.id,
+        status=ScenarioStatus.PASS,
+        points=2,
+        summary="Plain summary",
+        duration_seconds=1.1,
+    )
+    res_fail = ScenarioResult(
+        scenario_id="TC-03[/]",
+        status=ScenarioStatus.FAIL,
+        points=0,
+        summary="Failed [/] [bad output",
+        tool_calls_made=["lookup([/])", "run([bad)"],
+        expected_behavior="Call safe_tool([/]) [bad",
+        duration_seconds=2.3,
+    )
+    res_infra = ScenarioResult(
+        scenario_id="TC-04",
+        status=ScenarioStatus.FAIL,
+        points=0,
+        summary="",
+        note="Request timed out [/] [bad",
+        failure_kind=FailureKind.TIMEOUT,
+        duration_seconds=120.0,
+    )
+
+    summary = ModelScoreSummary(
+        scenario_results=[res_pass, res_fail, res_infra],
+        category_scores=[
+            CategoryScore(
+                category=Category.A,
+                label="Direct [/] [bad",
+                earned=2,
+                max_points=4,
+                percent=50.0,
+                pass_count=1,
+                fail_count=1,
+            )
+        ],
+        capability_scores=[
+            CapabilityScore(
+                capability="policy",
+                label="Policy [/] [bad",
+                earned=2,
+                max_points=4,
+                percent=50.0,
+                scenario_ids=["TC-01[/]", "TC-03[bad"],
+            )
+        ],
+        final_score=50,
+        total_points=2,
+        max_points=4,
+        rating="★★★ Adequate [/]",
+        excluded_scenarios=["TC-04[/]"],
+        completion_rate=66.7,
+        worst_category="Direct [/] [bad",
+        worst_category_percent=50,
+        safety_warnings=["TC-03: leaked [/] [bad"],
+    )
+    run_ctx = RunContext(
+        tool_version="0.1.0",
+        git_sha=None,
+        hostname="host",
+        platform_info="linux",
+        python_version="3.13",
+        model="qwen[/][bad",
+        backend="vllm[/]",
+        base_url="http://***:8000/[/]",
+        timeout_seconds=120.0,
+        server_model_root="/models/[bad]/qwen[/]",
+        engine_name="vLLM[/]",
+        engine_version="0.8[bad",
+        quantization="AWQ[/][bad",
+    )
+
+    buf = StringIO()
+    console = Console(file=buf, width=160, no_color=True)
+    disp = BenchmarkDisplay(
+        model="qwen[/][bad",
+        backend="vllm[/]",
+        base_url="http://***:8000/[/]",
+        scenarios=[sc_bracket, sc_plain],
+        run_context=run_ctx,
+    )
+    disp.console = console
+
+    # Alignment check: padding before escape keeps identical status column offset.
+    line_bracket_buf = StringIO()
+    line_plain_buf = StringIO()
+    Console(file=line_bracket_buf, width=200, no_color=True).print(
+        disp._format_result_line(sc_bracket, res_pass)
+    )
+    Console(file=line_plain_buf, width=200, no_color=True).print(
+        disp._format_result_line(sc_plain, res_plain)
+    )
+    assert line_bracket_buf.getvalue().index("PASS") == line_plain_buf.getvalue().index("PASS")
+
+    disp.start()
+    await disp.on_scenario_start(sc_bracket, 0, 2)
+    footer = disp._build_footer()
+    assert "Short [/] Title" in footer.plain
+    await disp.on_scenario_result(sc_bracket, res_pass, 0, 2)
+    await disp.on_scenario_result(sc_plain, res_infra, 1, 2)
+    disp.set_finished(summary)
+
+    print_final_report(
+        console,
+        "qwen[/][bad",
+        summary,
+        3.4,
+        run_context=run_ctx,
+    )
+
+    rendered = buf.getvalue()
+    assert "qwen[/][bad" in rendered
+    assert "vLLM[/] 0.8[bad" in rendered
+    assert "AWQ[/][bad" in rendered
+    assert "/models/[bad]/qwen[/]" in rendered
+    assert "TC-03: leaked [/] [bad" in rendered
+    assert "lookup([/])" in rendered
+    assert "Call safe_tool([/]) [bad" in rendered
+
+
+def test_plugin_lifecycle_and_spec_bench_redact_urls_on_interactive_console_and_escape_paths(
+    monkeypatch, tmp_path
+) -> None:
+    from typing import Any
+    from unittest.mock import AsyncMock
+
+    import httpx
+    import pytest
+
+    from tool_eval_bench.cli import plugin_lifecycle, spec_bench
+    from tool_eval_bench.runner.speculative import SpecDecodeSample
+
+    db_path = str(tmp_path / "benchmarks.sqlite")
+    monkeypatch.setattr("tool_eval_bench.storage.db._default_db_path", lambda: db_path)
+
+    # 1. Interactive Console in plugin_lifecycle redacts URLs and escapes benchmark_name / paths.
+    plain_buf = StringIO()
+    plain_console = Console(file=plain_buf, width=140, no_color=True)
+
+    def fail_coro() -> Any:
+        async def _inner() -> None:
+            raise httpx.ConnectError(
+                "failed connecting to http://secret-plugin.internal:8000/v1?key=sk-plugin [/] [bad"
+            )
+
+        return _inner()
+
+    with pytest.raises(SystemExit) as exc_info:
+        plugin_lifecycle.execute_plugin(plain_console, "GSM8K[/]", fail_coro, [])
+    assert exc_info.value.code == 1
+    out = plain_buf.getvalue()
+    assert "GSM8K[/] error:" in out
+    assert "secret-plugin.internal" not in out
+    assert "sk-plugin" not in out
+    assert "[/]" in out
+
+    empty_buf = StringIO()
+    empty_console = Console(file=empty_buf, width=140, no_color=True)
+    assert plugin_lifecycle.execute_plugin(empty_console, "MMLU[/][bad", AsyncMock(), []) is None
+    assert "No MMLU[/][bad results." in empty_buf.getvalue()
+
+    fake_res = MagicMock(score=87.5, rating="★★★★ Good", details={"correct": 7, "total": 8})
+    out_dir = tmp_path / "plugin[bold]out"
+    fin_buf = StringIO()
+    fin_console = Console(file=fin_buf, width=160, no_color=True)
+    plugin_lifecycle.finalize_plugin_run(
+        fin_console,
+        mode="gsm8k",
+        title="GSM8K",
+        display_name="Qwen[/]",
+        result=fake_res,
+        config={"model": "qwen", "backend": "vllm", "base_url": "http://***:8000"},
+        report_metrics=["- **Accuracy**: 87.5%"],
+        report_lines=["ok"],
+        output_dir=str(out_dir),
+        label=None,
+        run_context=None,
+    )
+    assert "plugin[bold]out" in fin_buf.getvalue().replace("\n", "")
+
+    # 2. Interactive Console in spec_bench redacts URLs on exception and escapes prompt_type / paths.
+    async def fail_spec(*_a: Any, **_kw: Any) -> list[SpecDecodeSample]:
+        raise httpx.ConnectError(
+            "spec failed at http://secret-spec.internal:8090/v1?api_key=sk-spec-secret [/] [bad"
+        )
+
+    monkeypatch.setattr("tool_eval_bench.runner.speculative.run_spec_bench", fail_spec)
+    spec_err_buf = StringIO()
+    spec_err_console = Console(file=spec_err_buf, width=160, no_color=True)
+    with pytest.raises(SystemExit) as spec_exc:
+        spec_bench.run_spec_bench(
+            spec_err_console,
+            "qwen",
+            "Qwen[/]",
+            "http://secret-spec.internal:8090",
+            None,
+            pp=128,
+            tg=64,
+            depths=[0],
+            output_dir=str(tmp_path / "spec_err"),
+        )
+    assert spec_exc.value.code == 1
+    spec_err_text = spec_err_buf.getvalue()
+    assert "secret-spec.internal" not in spec_err_text
+    assert "sk-spec-secret" not in spec_err_text
+    assert "[/]" in spec_err_text
+
+    async def ok_spec(*_a: Any, on_sample: Any = None, **_kw: Any) -> list[SpecDecodeSample]:
+        s_ok = SpecDecodeSample(
+            pp_tokens=128,
+            tg_tokens=64,
+            depth=0,
+            ttft_ms=12.0,
+            total_ms=500.0,
+            pp_tps=900.0,
+            tg_tps=120.0,
+            acceptance_rate=0.75,
+            acceptance_length=3.2,
+            draft_tokens_delta=80,
+            accepted_tokens_delta=60,
+            num_drafts_delta=20,
+            acceptance_source="response",
+            prompt_type="code[/]",
+        )
+        s_err = SpecDecodeSample(
+            depth=0,
+            prompt_type="bad[p]",
+            error="cell error from http://cell-secret.internal:8000/v1 [/]",
+        )
+        if on_sample is not None:
+            await on_sample(s_ok, 0, 2)
+            await on_sample(s_err, 1, 2)
+        return [s_ok, s_err]
+
+    monkeypatch.setattr("tool_eval_bench.runner.speculative.run_spec_bench", ok_spec)
+    spec_ok_dir = tmp_path / "spec[bold]dir"
+    spec_ok_buf = StringIO()
+    spec_ok_console = Console(file=spec_ok_buf, width=160, no_color=True)
+    samples = spec_bench.run_spec_bench(
+        spec_ok_console,
+        "qwen",
+        "Qwen[/]",
+        "http://localhost:8000",
+        None,
+        pp=128,
+        tg=64,
+        depths=[0],
+        prompt_types=["code[/]", "bad[p]"],
+        output_dir=str(spec_ok_dir),
+    )
+    assert len(samples) == 2
+    spec_ok_text = spec_ok_buf.getvalue()
+    assert "code[/]" in spec_ok_text
+    assert "spec[bold]dir" in spec_ok_text.replace("\n", "")
+    assert "cell-secret.internal" not in spec_ok_text

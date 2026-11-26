@@ -25,7 +25,7 @@ Three parts: a mock handler that answers tool calls deterministically, an evalua
 final state, and the two module-level exports.
 
 ```python
-"""TC-99: date-aware timezone conversion with an explicit tool contract."""
+"""TC-105: date-aware timezone conversion with an explicit tool contract."""
 
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -112,7 +112,7 @@ def evaluate(state: ScenarioState):
 
 
 SCENARIO = ScenarioDefinition(
-    id="TC-99",
+    id="TC-105",
     title="Timezone conversion",
     category=Category.B,
     user_message="Use convert_timezone to convert 09:00 Europe/Berlin on March 20, 2026 to America/Los_Angeles. Return only the converted time in HH:MM format.",
@@ -227,12 +227,31 @@ a different number of rounds.
 A helper used by more than one scenario in a group belongs in that group's `_shared.py`.
 
 Do not import one scenario module from another. Helpers with the same name behave differently
-across groups on purpose: `_result_matches_if_present` has five different implementations, and
-`_call_index`, `_numeric_value`, `_positive_argument_contains`, and `_status_is_success` each have
-two. A sibling import would let an edit to one scenario change another's score, and
+across groups on purpose: `_result_matches_if_present` has six group-scoped implementations, `_tool`
+has four, `_numeric_value`, `_status_is_success`, and `_answer_affirms_exact_value` each have three,
+and `_positive_argument_contains`, `_answer_affirms_rounded_value`, and `_parsed_stated_number` each
+have two. A sibling import would let an edit to one scenario change another's score, and
 `tests/test_scenario_registry.py` rejects it.
 
-Helpers used across groups live in `evals/helpers.py`.
+Helpers used across groups live in `evals/helpers/` (`__init__.py` re-exports the shared utilities
+from `_text.py`, `_intent.py`, `_state.py`, `_dates.py`, and `_mocks.py`).
+
+## Update the rubric AST gate
+
+Every `.py` file under `src/tool_eval_bench/evals/` and `src/tool_eval_bench/runner/orchestrator/`
+is hashed into `RUBRIC_AST_FINGERPRINT` in `src/tool_eval_bench/domain/rubric.py` (docstrings,
+comments, and whitespace are ignored). `tests/test_rubric_cohorts.py::test_rubric_ast_fingerprint_matches_source`
+fails CI until the fingerprint matches the source tree.
+
+1. When adding a scenario or changing scoring verdicts, prompts, translations, or mock noise, bump
+   the relevant version constant in `domain/rubric.py` (`EVAL_RUBRIC_VERSION`, `LOCALE_VERSION`, or
+   `NOISE_VERSION`) so runs under the updated rubric get their own leaderboard cohort.
+2. Refresh `RUBRIC_AST_FINGERPRINT` with the digest returned by `compute_rubric_ast_fingerprint()`:
+   ```bash
+   .venv/bin/python -c "from tool_eval_bench.domain.rubric import compute_rubric_ast_fingerprint; print(compute_rubric_ast_fingerprint())"
+   ```
+3. For a strictly verdict-preserving refactor (renames, helper extraction, or typing), update only
+   `RUBRIC_AST_FINGERPRINT` and explain in the pull request why verdicts did not change.
 
 ## Test it
 
@@ -248,7 +267,7 @@ unless it is marked `@pytest.mark.allow_missing_results` because missing results
 
 ```bash
 env -u FORCE_COLOR .venv/bin/python -m pytest tests/ -m "not live" -q
-tool-eval-bench run --scenarios TC-99 --dry-run
+tool-eval-bench run --scenarios TC-105 --dry-run
 ```
 
 `--dry-run` confirms registration without touching a server.

@@ -2017,3 +2017,196 @@ async def test_systemone_handles_null_input_tokens() -> None:
         assert res.input_tokens == 0
     finally:
         await adapter.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Bug 5: RateLimitCoordinator _next_slot reset & early-wakeup handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_coordinator_resets_next_slot_on_new_429(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new 429 resets _next_slot to _pause_until so abandoned slots cause no phantom wait."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from tool_eval_bench.adapters import http_retry
+    from tool_eval_bench.adapters.http_retry import RateLimitCoordinator
+
+    now = 1_000.0
+    gate = asyncio.Event()
+    sleeps: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(delay: float) -> None:
+        nonlocal now
+        sleeps.append(delay)
+        if not gate.is_set():
+            await gate.wait()
+        else:
+            now += max(0.0, delay)
+        await real_sleep(0)
+
+    monkeypatch.setattr(http_retry, "time", SimpleNamespace(monotonic=lambda: now))
+    monkeypatch.setattr(http_retry, "asyncio", SimpleNamespace(Lock=asyncio.Lock, sleep=fake_sleep))
+
+    coord = RateLimitCoordinator(step_seconds=1.0, max_interval_seconds=10.0)
+    await coord.on_rate_limited(0.5)  # pause_until=1000.5, min_interval=1.0
+
+    # Four concurrent waiters push _next_slot out to 1004.5 under generation 1.
+    waiters = [asyncio.create_task(coord.acquire()) for _ in range(4)]
+    while len(sleeps) < 4:
+        await real_sleep(0)
+    assert coord._next_slot == pytest.approx(1004.5)  # noqa: SLF001
+
+    # A second 429 arrives with a 2.0s pause (pause_until=1002.0).
+    # _next_slot MUST reset to 1002.0 instead of staying at 1004.5!
+    await coord.on_rate_limited(2.0)
+    assert coord._pause_until == pytest.approx(1002.0)  # noqa: SLF001
+    assert coord._next_slot == pytest.approx(1002.0)  # noqa: SLF001
+
+    # Advance virtual clock to the new pause start (1002.0) — BEFORE the old
+    # abandoned 1004.5 slot! Under generation 2 (min_interval=2.0), the 4
+    # waiters must claim 1002.0, 1004.0, 1006.0, 1008.0 (wait 0, 2, 2, 2s),
+    # NOT 1004.5+ (which would have added a 2.5s phantom wait to waiter 0).
+    now = 1002.0
+    gate.set()
+    await asyncio.gather(*waiters)
+    assert sleeps[4:] == pytest.approx([2.0, 2.0, 2.0])
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_coordinator_early_wakeup_finishes_same_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Waking slightly before start under the same generation sleeps start - now directly."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from tool_eval_bench.adapters import http_retry
+    from tool_eval_bench.adapters.http_retry import RateLimitCoordinator
+
+    # Sequence of monotonic timestamps:
+    # 1. on_rate_limited(0.0): now=100.0 -> pause_until=100.0, next_slot=100.0, min_interval=1.0
+    # 2. First acquire: reserve at 100.0 -> start=100.0, next_slot=101.0; lock re-check at 100.0 -> ok
+    # 3. Second acquire: reserve at 100.0 -> start=101.0, next_slot=102.0, delay=1.0
+    #    after first sleep: lock check reads 100.75 (< start=101.0, >= pause_until=100.0)
+    #    sleeps remaining 0.25 WITHOUT touching _next_slot!
+    #    after second sleep: lock check reads 101.0 -> returns!
+    timestamps = iter([100.0, 100.0, 100.0, 100.0, 100.75, 101.0])
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(http_retry, "time", SimpleNamespace(monotonic=lambda: next(timestamps)))
+    monkeypatch.setattr(http_retry, "asyncio", SimpleNamespace(Lock=asyncio.Lock, sleep=fake_sleep))
+
+    coord = RateLimitCoordinator(step_seconds=1.0, max_interval_seconds=10.0)
+    await coord.on_rate_limited(0.0)
+    await coord.acquire()
+    await coord.acquire()
+
+    assert sleeps == pytest.approx([1.0, 0.25])
+    # Must NOT have reserved a third phantom slot (would have been 103.0).
+    assert coord._next_slot == pytest.approx(102.0)  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# Bug 8: httpx connection pool sizing via max_concurrency
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("max_concurrency", "expected_max", "expected_keepalive"),
+    [
+        (None, 20, 10),
+        (1, 20, 10),
+        (16, 20, 16),
+        (32, 36, 32),
+    ],
+)
+async def test_retrying_adapter_pool_limits_scale_with_max_concurrency(
+    max_concurrency: int | None,
+    expected_max: int,
+    expected_keepalive: int,
+) -> None:
+    from tool_eval_bench.adapters.factory import build_adapter
+
+    adapter = build_adapter("http://localhost:8000/v1", max_concurrency=max_concurrency)
+    assert isinstance(adapter, OpenAICompatibleAdapter)
+    client = adapter._get_client()  # noqa: SLF001
+    pool = client._transport._pool  # type: ignore[attr-defined]  # noqa: SLF001
+    assert pool._max_connections == expected_max  # noqa: SLF001
+    assert pool._max_keepalive_connections == expected_keepalive  # noqa: SLF001
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_benchmark_service_passes_concurrency_to_adapter_pool() -> None:
+    from tool_eval_bench.application.service import BenchmarkService
+
+    service = BenchmarkService(repo=None, reporter=None)
+    adapter = service._adapter_for("vllm", "http://localhost:8000/v1", max_concurrency=40)  # noqa: SLF001
+    assert isinstance(adapter, OpenAICompatibleAdapter)
+    client = adapter._get_client()  # noqa: SLF001
+    pool = client._transport._pool  # type: ignore[attr-defined]  # noqa: SLF001
+    assert pool._max_connections == 44  # noqa: SLF001
+    assert pool._max_keepalive_connections == 40  # noqa: SLF001
+    await adapter.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Gap tests: adapters/requests.py and _repair_streamed_tool_args edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_minimal_request_gemini_and_openai_max_completion_tokens() -> None:
+    from tool_eval_bench.adapters.requests import minimal_request
+
+    url, payload, headers = minimal_request(
+        "https://generativelanguage.googleapis.com",
+        "gemini-2.5-flash",
+        "goog-key",
+        wire_format="gemini",
+        max_tokens=8,
+        extra_params={"top_p": 0.9},
+        headers={"X-Custom": "1"},
+    )
+    assert url.endswith("/v1beta/models/gemini-2.5-flash:generateContent")
+    assert payload["generationConfig"]["maxOutputTokens"] == 8
+    assert payload["generationConfig"]["topP"] == 0.9
+    assert headers["x-goog-api-key"] == "goog-key"
+    assert headers["X-Custom"] == "1"
+
+    oa_url, oa_payload, oa_headers = minimal_request(
+        "http://localhost:8000/v1",
+        "o3-mini",
+        "oa-key",
+        wire_format="openai",
+        max_tokens=4,
+        extra_params={"max_completion_tokens": 32},
+    )
+    assert oa_url.endswith("/v1/chat/completions")
+    assert oa_payload["max_completion_tokens"] == 32
+    assert "max_tokens" not in oa_payload
+    assert oa_headers["Authorization"] == "Bearer oa-key"
+
+
+def test_repair_streamed_tool_args_edge_cases() -> None:
+    # Trailing unfinished backslash escape inside an unterminated string.
+    repaired_bs = _repair_streamed_tool_args('{"path": "C:\\\\dir\\')
+    assert json.loads(repaired_bs) == {"path": "C:\\dir\\"}
+
+    # Escaped quote inside an unterminated string stays properly escaped.
+    repaired_quote = _repair_streamed_tool_args('{"msg": "say \\"hi')
+    assert json.loads(repaired_quote) == {"msg": 'say "hi'}
+
+    # Mismatched closing delimiter cannot be repaired -> returned unchanged.
+    assert _repair_streamed_tool_args('{"a": [1}') == '{"a": [1}'
+
+    # Unrepairable incomplete key/value -> returned unchanged.
+    assert _repair_streamed_tool_args('{"a": ') == '{"a": '

@@ -38,8 +38,8 @@ from tool_eval_bench import run_benchmark  # same function
 |---|---|---|
 | `schema_version` | str | Output schema version (currently `"1"`) |
 | `tool_eval_bench_version` | str | Package version, such as `"2.6.0"` or an identifiable development version |
-| `final_score` | int | 0–100 composite score |
-| `rating` | str | Star rating string |
+| `final_score` | int/None | 0 to 100 composite score, or `None` when withheld (`max_points == 0`, all scenarios excluded by infrastructure failures) |
+| `rating` | str | Star rating string, or `"Withheld"` when `final_score` is `None` |
 | `safety_warnings` | list | Safety-critical failures (empty when clean) |
 | `deployability` | int/None | `alpha × final_score + (1 − alpha) × responsiveness`; `None` without latency data. See [methodology](methodology.md#responsiveness-and-deployability) |
 | `responsiveness` | int/None | 0–100 from median turn latency, logistic curve centred on 3 s; `None` without latency data |
@@ -53,15 +53,19 @@ from tool_eval_bench import run_benchmark  # same function
 
 The `metadata` dictionary is the run context that `tool-eval-bench --json` records,
 with the same keys for the same server. It carries the local environment
-(`tool_version`, `git_sha`, `hostname`, `platform_info`, `python_version`), the run
-parameters (`model`, `backend`, redacted `base_url`, `temperature`, `max_turns`,
-`timeout_seconds`, `seed`, `scenario_selector`, `trials`, `parallel`, `error_rate`,
-`thinking_enabled`, `max_tokens`, and `extra_params` or `system_prompt` when set),
-and the best-effort engine facts used in reports and comparison fingerprints
-(`engine_name`, `engine_version`, `server_model_id`, `server_model_root`,
-`max_model_len`, `quantization`, `slot_count`, `spec_decoding`). Keys whose value
-is unknown are omitted. `slot_count` records the llama.cpp server slot count from
-`/props.total_slots`. It is request concurrency capacity, not a physical GPU count.
+(`tool_version`, `git_sha`, `hostname`, `platform_info`, `python_version`), rubric
+provenance (`eval_rubric_version`, `locale_version`, `noise_version` from
+`domain/rubric.py`), the run parameters (`model`, `backend`, redacted `base_url`,
+`temperature`, `max_turns`, `timeout_seconds`, `seed`, `scenario_selector`,
+`trials`, `parallel`, `error_rate`, `thinking_enabled`, `max_tokens`, and
+`extra_params` or `system_prompt` when set), and the best-effort engine facts
+used in reports and comparison fingerprints (`engine_name`, `engine_version`,
+`server_model_id`, `server_model_root`, `max_model_len`, `quantization`,
+`slot_count`, `spec_decoding`). Keys whose value is unknown are omitted.
+`slot_count` records request concurrency capacity when exposed by the server
+(llama.cpp, Strata, and TabbyAPI `/props.total_slots`, TensorFold CUDA `/health`
+`streams.max`, Flare `/v1/models` `flare.max_concurrency`, and Splash `/status`
+`frontend.preparation_capacity`), not a physical GPU count.
 `gpu_count` remains absent unless the backend exposes a trustworthy hardware count.
 If the context cannot be built, the run still completes and `metadata` falls back
 to a smaller dictionary of host facts and the `/v1/models` probe.
@@ -110,6 +114,8 @@ result = asyncio.run(run_benchmark(
     max_turns=8,
     seed=None,
     reference_date=None,  # "YYYY-MM-DD"
+    variant_seed=None,    # versioned deterministic fixture variants
+    locale=None,          # "de", "es", "zh", or "ja" (26 language-neutral scenarios)
     concurrency=1,
     error_rate=0.0,
     alpha=0.7,            # quality weight in deployability; speed gets 1 − alpha
@@ -188,7 +194,7 @@ result = asyncio.run(run_benchmark(
     scenarios=selected,
 ))
 
-# All 88 including Hard Mode
+# All 104 including Hard Mode
 result = asyncio.run(run_benchmark(
     model="my-model", base_url="http://localhost:8000",
     scenarios=list(ALL_SCENARIOS_WITH_HARDMODE),
@@ -231,10 +237,13 @@ result = asyncio.run(run_benchmark(
 scores = result["scores"]
 
 # Overall
-scores["final_score"]   # 0-100
-scores["total_points"]  # sum of all scenario points
-scores["max_points"]    # maximum possible points
-scores["rating"]        # e.g. "★★★★ Good"
+scores["final_score"]                    # 0-100, or None when withheld (max_points == 0)
+scores["total_points"]                   # sum of all scenario points
+scores["max_points"]                     # maximum possible points
+scores["rating"]                         # e.g. "★★★★ Good", or "Withheld"
+scores["degenerate_loop_scenarios"]      # count of scenarios hitting a degenerate repetition loop
+scores["answer_in_thinking_turns"]       # total turns with reasoning text but no visible answer
+scores["answer_in_thinking_scenarios"]   # count of scenarios with at least one such turn
 
 # Per-category
 for cs in scores["category_scores"]:
@@ -247,19 +256,21 @@ for sr in scores["scenario_results"]:
 
 ## Error Handling
 
-When the benchmark fails before scenario execution (connection errors,
-no models, etc.), the errors use structured codes from
-`tool_eval_bench.domain.errors`:
+Headless CLI runs (`--json`) emit structured error codes from
+`tool_eval_bench.domain.errors`. All codes except `run_failed` fire before
+scenario execution starts:
 
-| Code | Meaning |
-|------|---------|
-| `connection_failed` | Server unreachable |
-| `http_error` | HTTP 4xx/5xx response |
-| `detection_failed` | Probing exception |
-| `invalid_response` | Non-JSON response |
-| `no_models` | Empty model list |
-| `model_not_available` | Model is listed but fails a pre-flight inference request |
-| `no_server` | Auto-discovery found nothing |
+| Code | Exit | Meaning |
+|------|------|---------|
+| `connection_failed` | 2 | Server unreachable |
+| `http_error` | 2 | HTTP 4xx/5xx response |
+| `detection_failed` | 2 | Probing exception |
+| `invalid_response` | 2 | Non-JSON response |
+| `no_models` | 3 | Empty model list |
+| `model_not_available` | 3 | Model is listed but fails a pre-flight inference request |
+| `no_server` | 2 | Auto-discovery found nothing |
+| `invalid_arguments` | 2 | Parsed arguments are invalid together or in value |
+| `run_failed` | 1 | The run started but could not finish (resume rejected, setup failed, or mode error) |
 
 ## Machine-Readable Args Schema
 
@@ -268,7 +279,7 @@ External tools can validate benchmark configuration:
 ```python
 from tool_eval_bench.schema import get_schema
 
-schema = get_schema()  # {"schema_version": "10", "args": [...]}
+schema = get_schema()  # {"schema_version": "13", "args": [...], "commands": {...}}
 for arg in schema["args"]:
     print(f"{arg['name']}: {arg['type']} = {arg['default']}")
 ```
@@ -336,8 +347,9 @@ with RunRepository() as repo:
   recorded `unknown` before detection existed do not share a fingerprint with new runs
   against the same server.
 - The label does not choose the request format. OpenAI-compatible backends use the
-  OpenAI adapter; Gemini can use its native adapter when `wire_format="gemini"` or the
-  URL selects it.
+  OpenAI adapter; Gemini uses its native adapter when `wire_format="gemini"` or the
+  URL selects it; Anthropic (and Messages API gateways) uses its native adapter when
+  `wire_format="anthropic"` or the URL selects it.
 - The `base_url` should be the server root **without** `/v1`
   (e.g. `http://localhost:8080`). The adapter appends `/v1/chat/completions`
   automatically. If you include `/v1`, it will be detected and not duplicated.
@@ -348,13 +360,17 @@ with RunRepository() as repo:
   `extra_params={"chat_template_kwargs": {"enable_thinking": False}}` to
   disable thinking — or use the CLI's `--no-think` flag.
 
-## Accuracy Benchmarks (GSM8K, MMLU, IFEval)
+## Benchmark plugins (GSM8K, MMLU, IFEval, Needle, Toolscale, Decision)
 
-The accuracy benchmark plugins are currently **CLI-only** (`--gsm8k-only`,
-`--mmlu-only`, `--ifeval-only`).  They do not yet have a Python API equivalent
-of `run_benchmark()`.
+All six registered plugins (`gsm8k`, `mmlu`, `ifeval`, `needle`, `toolscale`,
+`decision`) are invoked from the CLI via `tool-eval-bench plugin <name>` (or
+flat flags `--gsm8k-only`, `--mmlu-only`, `--ifeval-only`, `--needle-only`,
+`--toolscale-only`, `--decision-bench-only`). They do not have a high-level
+`run_benchmark()` wrapper. `toolscale` requires `tools` support, and `decision`
+targets llama.cpp's `/v1/systemone` endpoint (see [decision-models.md](decision-models.md#programmatic-use)
+for direct Python usage of `DecisionPlugin` and `SystemOneAdapter`).
 
-To run accuracy benchmarks programmatically, use `subprocess`:
+To run plugins programmatically via the CLI, use `subprocess`:
 
 ```python
 import json, subprocess
@@ -363,7 +379,7 @@ r = subprocess.run(
     ["tool-eval-bench", "--mmlu-only", "--mmlu-limit", "50", "--json"],
     capture_output=True, text=True,
 )
-# Accuracy benchmarks have no JSON result envelope, so stdout stays empty.
+# Plugin benchmarks have no JSON result envelope, so stdout stays empty.
 # The results are in the Markdown report and SQLite; the run_saved event on
 # stderr names them.
 saved = next(
@@ -376,5 +392,5 @@ print(saved["run_id"], saved["report_path"])
 
 Each plugin implements the `BenchmarkPlugin` ABC from
 `tool_eval_bench.domain.plugin` and can be instantiated directly for
-advanced usage — see the plugin source code for the `run()` method
-signature.
+advanced usage; see each plugin's `run()` method signature in
+`src/tool_eval_bench/plugins/`.

@@ -223,11 +223,11 @@ class MMLUPlugin(BenchmarkPlugin):
 
         async def eval_one(idx: int, item: MMLUItem) -> None:
             nonlocal correct_count, total_tokens, error_count, progress_counter, truncated_count
-            few_shots = dev_by_subject.get(item.subject, [])
-            messages: list[ChatMessage] = build_messages(item, few_shots, n_shots=n_shots)
 
             try:
                 async with sem:
+                    few_shots = dev_by_subject.get(item.subject, [])
+                    messages: list[ChatMessage] = build_messages(item, few_shots, n_shots=n_shots)
                     response = await adapter.chat_completion(
                         model=model,
                         messages=messages,
@@ -301,6 +301,9 @@ class MMLUPlugin(BenchmarkPlugin):
 
         tasks = [eval_one(i, item) for i, item in enumerate(all_items)]
         gather_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for outcome in gather_results:
+            if isinstance(outcome, BaseException) and not isinstance(outcome, Exception):
+                raise outcome
         for i, exc in enumerate(gather_results):
             if isinstance(exc, BaseException):
                 logger.error("MMLU question %d crashed: %s", i, exc)

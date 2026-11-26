@@ -239,7 +239,7 @@ async def test_model_picker_uses_a_select_instead_of_a_datalist(
     """
     app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
     async with web_client(app) as client:
-        script = (await client.get("/static/app.js")).text
+        script = (await client.get("/static/live.js")).text
     assert "launch-model-select" in script
     assert "probed-models-datalist" not in script
 
@@ -249,7 +249,7 @@ async def test_launcher_form_exposes_the_seed_field(launcher_env: dict[str, str]
     """The Launch & Live form omitted the sampling seed the launcher accepts."""
     app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
     async with web_client(app) as client:
-        script = (await client.get("/static/app.js")).text
+        script = (await client.get("/static/live.js")).text
     assert 'input("launch-seed"' in script
     assert "function readSeedField(" in script
     submit_block = script.split("async function submitLaunch(", maxsplit=1)[1].split(
@@ -327,6 +327,8 @@ async def test_launch_run_executes_and_persists_results(
         ("timeout_seconds", 0, "timeout_seconds must be greater than 0"),
         ("max_turns", 2.5, "max_turns must be a whole number"),
         ("concurrency", 0, "concurrency must be at least 1"),
+        ("concurrency", 33, "concurrency must be at most 32"),
+        ("concurrency", 32, None),  # upper bound is inclusive
         ("seed", [1], "seed must be a number"),
         ("seed", 2.5, "seed must be a whole number"),
         ("temperature", "nan", "temperature must be finite"),
@@ -743,26 +745,21 @@ def test_the_launcher_page_never_carries_a_reviewer_key_to_another_server() -> N
     """
     from pathlib import Path
 
-    app_js = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "tool_eval_bench"
-        / "web"
-        / "static"
-        / "app.js"
-    ).read_text(encoding="utf-8")
+    static_dir = Path(__file__).resolve().parents[1] / "src" / "tool_eval_bench" / "web" / "static"
+    live_js = (static_dir / "live.js").read_text(encoding="utf-8")
+    leaderboard_js = (static_dir / "leaderboard.js").read_text(encoding="utf-8")
 
-    assert "onchange: forgetReviewerKeyOnNewOrigin" in app_js
-    assert "oninput: bindReviewerKeyToOrigin" in app_js
+    assert "onchange: forgetReviewerKeyOnNewOrigin" in live_js
+    assert "oninput: bindReviewerKeyToOrigin" in live_js
     # A blank reviewer URL means the benchmarked server, so the binding uses
     # the effective URL, falling back to the benchmark Base URL.
-    effective = app_js.split("function effectiveReviewerOrigin(", maxsplit=1)[1].split(
-        "\n  }\n", maxsplit=1
+    effective = live_js.split("function effectiveReviewerOrigin(", maxsplit=1)[1].split(
+        "\n}\n", maxsplit=1
     )[0]
     assert 'byId("launch-base-url")' in effective
     # The reviewer probe sends the run's key only to the run's own origin.
-    probe = app_js.split("async function probeReviewer(", maxsplit=1)[1].split(
-        "\n  }\n", maxsplit=1
+    probe = live_js.split("async function probeReviewer(", maxsplit=1)[1].split(
+        "\n}\n", maxsplit=1
     )[0]
     assert "ownKey || (sameOrigin ? runKey" in probe
     # A blank reviewer URL probes the benchmark server with its wire format.
@@ -773,16 +770,16 @@ def test_the_launcher_page_never_carries_a_reviewer_key_to_another_server() -> N
     assert "modelInput.value = models[0].id;" in probe
     assert "is not listed here, now" in probe
     # Leaderboard rows name the reviewer of a paired score.
-    assert "row.reviewer_model ? h(" in app_js
+    assert "row.reviewer_model ? h(" in leaderboard_js
     for function in ("function bindReviewerKeyToOrigin(", "function forgetReviewerKeyOnNewOrigin("):
-        body = app_js.split(function, maxsplit=1)[1].split("\n  }\n", maxsplit=1)[0]
+        body = live_js.split(function, maxsplit=1)[1].split("\n}\n", maxsplit=1)[0]
         assert "effectiveReviewerOrigin()" in body, function
     for function in (
         "async function probeReviewer(",
         "function readReviewerFields(",
         "async function resumeInterruptedRun(",
     ):
-        body = app_js.split(function, maxsplit=1)[1].split("\n  }\n", maxsplit=1)[0]
+        body = live_js.split(function, maxsplit=1)[1].split("\n}\n", maxsplit=1)[0]
         assert "forgetReviewerKeyOnNewOrigin()" in body, function
 
 
@@ -827,3 +824,526 @@ async def test_a_reviewer_probe_answers_a_malformed_url_without_raising(
         "error": "The reviewer Base URL is not a valid http(s) URL.",
         "models": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_probe_endpoint_models_env_and_auto_discovery_fallbacks(
+    launcher_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tool_eval_bench.web.launcher import probe_endpoint_models
+
+    probed_urls: list[str] = []
+
+    async def fake_fetch(url: str, endpoint: str, headers: dict[str, str], fmt: str) -> Any:
+        probed_urls.append(url)
+        return {"data": ["skip-me", {"id": ""}, {"id": "discovered-model"}]}
+
+    monkeypatch.setattr("tool_eval_bench.web.launcher._fetch_models_json", fake_fetch)
+
+    # 1. TOOL_EVAL_BASE_URL fallback when base_url is omitted.
+    monkeypatch.setenv("TOOL_EVAL_BASE_URL", "http://127.0.0.1:8123")
+    env_res = await probe_endpoint_models(base_url=None)
+    assert env_res["reachable"] is True
+    assert env_res["resolved_base_url"] == "http://127.0.0.1:8123"
+    assert env_res["models"] == [{"id": "discovered-model", "display_name": "discovered-model"}]
+
+    # 2. Local auto-discovery fallback when neither base_url nor env var is set.
+    monkeypatch.delenv("TOOL_EVAL_BASE_URL", raising=False)
+
+    async def fake_discover_found() -> tuple[str, str, str]:
+        return ("http://127.0.0.1:8000", "vllm", "vLLM")
+
+    monkeypatch.setattr("tool_eval_bench.web.launcher._discover_async", fake_discover_found)
+    auto_res = await probe_endpoint_models(base_url=None)
+    assert auto_res["reachable"] is True
+    assert auto_res["resolved_base_url"] == "http://127.0.0.1:8000"
+
+    # 3. Empty JSON body on POST /api/probe falls through to discovery; None -> unreachable.
+    async def fake_discover_none() -> None:
+        return None
+
+    monkeypatch.setattr("tool_eval_bench.web.launcher._discover_async", fake_discover_none)
+    app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
+    async with web_client(app) as client:
+        empty_probe = await client.post(
+            "/api/probe", content=b"", headers={"Content-Type": "application/json"}
+        )
+    assert empty_probe.status_code == 200
+    assert empty_probe.json()["reachable"] is False
+    assert "No inference server found" in empty_probe.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_stop_web_run_handles_completed_race_running_after_cancel_and_taskless_session(
+    launcher_env: dict[str, str],
+) -> None:
+    from tool_eval_bench.web.launcher import RunConflict, stop_web_run
+    from tool_eval_bench.web.live import LiveRunHub
+
+    hub = LiveRunHub()
+
+    # Taskless session absent from storage raises RunConflict with session status.
+    taskless = hub.register("taskless-done", model="m", backend="vllm", total=1)
+    taskless.status = "completed"
+    with pytest.raises(RunConflict, match="is completed, not running"):
+        await stop_web_run(hub, "taskless-done")
+
+    # Live task that ignores cancel and finishes with status="completed" raises RunConflict.
+    raced = hub.register("race-complete", model="m", backend="vllm", total=1)
+    started = asyncio.Event()
+
+    async def _finish_on_cancel() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raced.status = "completed"
+            return
+
+    raced.task = asyncio.create_task(_finish_on_cancel())
+    await started.wait()
+    with pytest.raises(RunConflict, match="is completed, not running"):
+        await stop_web_run(hub, "race-complete")
+
+    # Live task that exits on cancel without updating session.status gets marked interrupted.
+    still_running = hub.register("cancel-no-hook", model="m", backend="vllm", total=1)
+    started2 = asyncio.Event()
+
+    async def _swallow_cancel() -> None:
+        started2.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            return
+
+    still_running.task = asyncio.create_task(_swallow_cancel())
+    await started2.wait()
+    stopped = await stop_web_run(hub, "cancel-no-hook")
+    assert stopped == {"run_id": "cancel-no-hook", "status": "interrupted"}
+    assert still_running.status == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_resume_web_run_guards_and_prior_session_id_inheritance(
+    launcher_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tool_eval_bench.web.launcher import (
+        RunConflict,
+        _resolve_launcher_scenarios,
+        launch_web_run,
+        resume_web_run,
+    )
+    from tool_eval_bench.web.live import LiveRunHub
+
+    app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
+
+    # Missing model rejected cleanly; comma-separated scenarios and empty filters validated.
+    with pytest.raises(ValueError, match="model is required"):
+        await launch_web_run(
+            LiveRunHub(), {"base_url": _BASE_URL}, output_dir=launcher_env["output_dir"]
+        )
+    resolved, _, _ = _resolve_launcher_scenarios({"preset": "custom", "scenarios": "TC-01, TC-02"})
+    assert [sc.id for sc in resolved] == ["TC-01", "TC-02"]
+    with pytest.raises(ValueError, match="No scenarios matched"):
+        _resolve_launcher_scenarios({"preset": "custom", "categories": ["ZZ"]})
+
+    # Seed non-interrupted, non-tool_eval, and session-tagged interrupted runs.
+    _store_run(launcher_env["db_path"], "run-completed", status="completed")
+    with RunRepository(db_path=launcher_env["db_path"]) as repo:
+        repo.upsert_scenario_run(
+            {
+                "run_id": "run-perf-interrupted",
+                "status": "interrupted",
+                "run_type": "perf",
+                "model": "Qwen/Qwen3-8B",
+                "config": {"model": "Qwen/Qwen3-8B", "backend": "vllm"},
+                "metadata": {},
+                "scores": {},
+            }
+        )
+    _store_run(launcher_env["db_path"], "run-with-session", status="interrupted")
+    with RunRepository(db_path=launcher_env["db_path"]) as repo:
+        row = repo.get("run-with-session")
+        assert row is not None
+        row["metadata"]["session_id"] = "sess-inherited-42"
+        repo.upsert_scenario_run(row)
+
+    async with web_client(app) as client:
+        # Missing run -> 404
+        assert (
+            await client.post("/api/runs/does-not-exist/resume", json={"base_url": _BASE_URL})
+        ).status_code == 404
+        # Non-interrupted run in DB (no live session in hub) -> 409
+        non_int = await client.post("/api/runs/run-completed/resume", json={"base_url": _BASE_URL})
+        assert non_int.status_code == 409
+        assert "Only interrupted runs can be resumed" in non_int.json()["error"]
+        # Non-tool_eval interrupted run -> 400
+        non_tool = await client.post(
+            "/api/runs/run-perf-interrupted/resume", json={"base_url": _BASE_URL}
+        )
+        assert non_tool.status_code == 400
+        assert "Only tool_eval runs can be resumed" in non_tool.json()["error"]
+
+    # Already-live session raises RunConflict before touching storage.
+    hub = LiveRunHub()
+    live = hub.register("already-live", model="m", backend="vllm", total=1)
+    live.task = asyncio.create_task(asyncio.sleep(10))
+    try:
+        with pytest.raises(RunConflict, match="already running"):
+            await resume_web_run(hub, "already-live", {"base_url": _BASE_URL})
+    finally:
+        live.task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await live.task
+
+    # Resuming a run with a prior session_id preserves it on the stored row.
+    _use_adapter(monkeypatch, _FakeAdapter())
+    async with web_client(app) as client:
+        resumed = await client.post(
+            "/api/runs/run-with-session/resume", json={"base_url": _BASE_URL}
+        )
+        assert resumed.status_code == 202, resumed.text
+        session = app.state.live_hub.get("run-with-session")
+        assert session is not None and session.task is not None
+        await session.task
+
+    stored = await asyncio.to_thread(get_run, "run-with-session", include_traces=False)
+    assert stored is not None
+    assert stored["status"] == "completed"
+    assert stored["session_id"] == "sess-inherited-42"
+
+
+@pytest.mark.asyncio
+async def test_open_service_async_closes_connection_when_cancelled_during_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import contextlib
+    import threading
+
+    from tool_eval_bench.web.launcher import _open_service_async
+
+    entered = threading.Event()
+    release = threading.Event()
+    closed = False
+
+    @contextlib.contextmanager
+    def _slow_open(output_dir: str | None = None) -> Any:
+        nonlocal closed
+        entered.set()
+        release.wait(timeout=5.0)
+        try:
+            yield object()
+        finally:
+            closed = True
+
+    monkeypatch.setattr("tool_eval_bench.web.launcher.open_benchmark_service", _slow_open)
+
+    async def _runner() -> None:
+        async with _open_service_async(None):
+            pass
+
+    task = asyncio.create_task(_runner())
+    await asyncio.to_thread(entered.wait, 5.0)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert closed is True
+
+
+@pytest.mark.asyncio
+async def test_delete_runs_forgets_cached_live_session_but_keeps_running_one(
+    launcher_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tool_eval_bench.web.live import LiveRunHub
+
+    monkeypatch.setattr(
+        "tool_eval_bench.storage.db._default_db_path",
+        lambda: launcher_env["db_path"],
+    )
+    _use_adapter(monkeypatch, _FakeAdapter())
+    app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
+    async with web_client(app) as client:
+        started = (
+            await client.post(
+                "/api/runs",
+                json={
+                    "base_url": _BASE_URL,
+                    "model": "qwen",
+                    "backend": "vllm",
+                    "preset": "custom",
+                    "scenarios": ["TC-01"],
+                },
+            )
+        ).json()
+        run_id = started["run_id"]
+        session = app.state.live_hub.get(run_id)
+        assert session is not None and session.task is not None
+        await session.task
+
+        assert (await client.get(f"/api/runs/{run_id}/events")).status_code == 200
+
+        deleted = await client.post("/api/runs/delete", json={"run_ids": [run_id]})
+        assert deleted.status_code == 200
+        assert deleted.json()["deleted"] == [run_id]
+
+        assert app.state.live_hub.get(run_id) is None
+        assert (await client.get(f"/api/runs/{run_id}/events")).status_code == 404
+
+    hub = LiveRunHub()
+    live_session = hub.register("still-running", model="qwen", backend="vllm", total=1)
+    live_session.task = asyncio.create_task(asyncio.sleep(10))
+    try:
+        hub.forget("still-running")
+        assert hub.get("still-running") is live_session
+    finally:
+        live_session.task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await live_session.task
+
+
+@pytest.mark.asyncio
+async def test_stop_web_run_immediately_after_launch_marks_session_interrupted(
+    launcher_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tool_eval_bench.web.launcher import RunConflict, launch_web_run, stop_web_run
+    from tool_eval_bench.web.live import LiveRunHub
+
+    _use_adapter(monkeypatch, _StallAfterFirst())
+    hub = LiveRunHub()
+    started = await launch_web_run(
+        hub,
+        {
+            "base_url": _BASE_URL,
+            "model": "qwen",
+            "backend": "vllm",
+            "preset": "custom",
+            "scenarios": ["TC-01", "TC-02"],
+        },
+        output_dir=launcher_env["output_dir"],
+    )
+    run_id = started["run_id"]
+    stopped = await stop_web_run(hub, run_id)
+    assert stopped == {"run_id": run_id, "status": "interrupted"}
+    session = hub.get(run_id)
+    assert session is not None and session.status == "interrupted"
+
+    with pytest.raises(RunConflict, match="interrupted"):
+        await stop_web_run(hub, run_id)
+
+
+@pytest.mark.asyncio
+async def test_stop_web_run_raises_conflict_when_task_completes_during_cancel(
+    launcher_env: dict[str, str],
+) -> None:
+    from tool_eval_bench.web.launcher import RunConflict, stop_web_run
+    from tool_eval_bench.web.live import LiveRunHub
+
+    hub = LiveRunHub()
+    session = hub.register("race-done", model="qwen", backend="vllm", total=1)
+
+    async def finish_cleanly() -> None:
+        session.status = "completed"
+
+    session.task = asyncio.create_task(finish_cleanly())
+    await session.task
+    with pytest.raises(RunConflict, match="completed"):
+        await stop_web_run(hub, "race-done")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_resume_requests_allow_only_one_and_preserve_label_and_session(
+    launcher_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tool_eval_bench.web.launcher import (
+        RunConflict,
+        launch_web_run,
+        resume_web_run,
+        stop_web_run,
+    )
+    from tool_eval_bench.web.live import LiveRunHub
+
+    stalling = _StallAfterFirst()
+    _use_adapter(monkeypatch, stalling)
+    hub = LiveRunHub()
+    started = await launch_web_run(
+        hub,
+        {
+            "base_url": _BASE_URL,
+            "model": "qwen",
+            "backend": "vllm",
+            "preset": "custom",
+            "scenarios": ["TC-01", "TC-02"],
+            "label": "canary-label",
+        },
+        output_dir=launcher_env["output_dir"],
+    )
+    run_id = started["run_id"]
+    session = hub.get(run_id)
+    assert session is not None
+    await _wait_for(lambda: stalling.calls >= 2)
+
+    await stop_web_run(hub, run_id)
+    with RunRepository(db_path=launcher_env["db_path"]) as repo:
+        row = repo.get(run_id)
+        assert row is not None
+        assert row["metadata"]["label"] == "canary-label"
+
+    _use_adapter(monkeypatch, _FakeAdapter(delay_s=0.02))
+    outcomes = await asyncio.gather(
+        resume_web_run(
+            hub,
+            run_id,
+            {"base_url": _BASE_URL},
+            output_dir=launcher_env["output_dir"],
+        ),
+        resume_web_run(
+            hub,
+            run_id,
+            {"base_url": _BASE_URL},
+            output_dir=launcher_env["output_dir"],
+        ),
+        return_exceptions=True,
+    )
+    successes = [o for o in outcomes if isinstance(o, dict)]
+    conflicts = [o for o in outcomes if isinstance(o, RunConflict)]
+    assert len(successes) == 1
+    assert len(conflicts) == 1
+
+    resumed_session = hub.get(run_id)
+    assert resumed_session is not None and resumed_session.task is not None
+    await resumed_session.task
+
+    with RunRepository(db_path=launcher_env["db_path"]) as repo:
+        completed = repo.get(run_id)
+        assert completed is not None
+        assert completed["status"] == "completed"
+        assert completed["metadata"]["label"] == "canary-label"
+
+
+@pytest.mark.asyncio
+async def test_web_launcher_rejects_non_http_urls_and_unknown_backends(
+    launcher_env: dict[str, str],
+) -> None:
+    from tool_eval_bench.web.launcher import (
+        launch_web_run,
+        probe_endpoint_models,
+        resume_web_run,
+    )
+    from tool_eval_bench.web.live import LiveRunHub
+
+    hub = LiveRunHub()
+    probe_res = await probe_endpoint_models(base_url="file:///etc/passwd")
+    assert probe_res["reachable"] is False
+    assert "must use http or https" in probe_res["error"]
+
+    with pytest.raises(ValueError, match="base_url must use http or https"):
+        await launch_web_run(
+            hub,
+            {"base_url": "ftp://localhost:8000", "model": "qwen", "scenarios": ["TC-01"]},
+            output_dir=launcher_env["output_dir"],
+        )
+
+    with pytest.raises(ValueError, match="Unsupported backend"):
+        await launch_web_run(
+            hub,
+            {
+                "base_url": _BASE_URL,
+                "model": "qwen",
+                "backend": "not-a-backend",
+                "scenarios": ["TC-01"],
+            },
+            output_dir=launcher_env["output_dir"],
+        )
+
+    with RunRepository(db_path=launcher_env["db_path"]) as repo:
+        repo.upsert_scenario_run(
+            {
+                "run_id": "interrupted-url-test",
+                "run_type": "tool_eval",
+                "status": "interrupted",
+                "config": {
+                    "model": "qwen",
+                    "backend": "vllm",
+                    "base_url": "http://***:8000",
+                    "scenario_ids": ["TC-01"],
+                },
+                "metadata": {"model": "qwen"},
+                "scores": {},
+            }
+        )
+    with pytest.raises(ValueError, match="base_url must use http or https"):
+        await resume_web_run(
+            hub,
+            "interrupted-url-test",
+            {"base_url": "file:///tmp/socket"},
+            output_dir=launcher_env["output_dir"],
+        )
+
+
+def test_app_js_numeric_validation_and_live_state_cleanup_guards() -> None:
+    from pathlib import Path
+
+    static_dir = Path(__file__).resolve().parents[1] / "src" / "tool_eval_bench" / "web" / "static"
+    live_js = (static_dir / "live.js").read_text(encoding="utf-8")
+    history_js = (static_dir / "history.js").read_text(encoding="utf-8")
+
+    assert "function readNumericField(" in live_js
+    assert "el.validity?.badInput" in live_js
+    assert "Number.isFinite(num)" in live_js
+    assert "gone.has(state.liveRunId)" in history_js
+    assert "Could not resume the run:" in live_js
+    submit_block = live_js.split("async function submitLaunch(", maxsplit=1)[1].split(
+        "function turnRow(", maxsplit=1
+    )[0]
+    assert "runId" not in submit_block
+
+
+@pytest.mark.asyncio
+async def test_web_launcher_rejects_scenario_packs_and_unknown_presets(
+    launcher_env: dict[str, str],
+) -> None:
+    from tests.web_support import AUTH_HEADERS
+    from tool_eval_bench.web.launcher import _resolve_launcher_scenarios, launch_web_run
+    from tool_eval_bench.web.live import LiveRunHub
+
+    # Positive preset coverage.
+    short_default, packs, held = _resolve_launcher_scenarios({})
+    assert len(short_default) == 15 and packs is None and held == frozenset()
+    short_empty, _, _ = _resolve_launcher_scenarios({"preset": ""})
+    assert len(short_empty) == 15
+    standard, _, _ = _resolve_launcher_scenarios({"preset": "standard"})
+    assert len(standard) == 69
+    hardmode, _, _ = _resolve_launcher_scenarios({"preset": "hardmode"})
+    assert len(hardmode) == 104
+    hardmode_only, _, _ = _resolve_launcher_scenarios({"preset": "hardmode_only"})
+    assert len(hardmode_only) == 35
+    custom_one, _, _ = _resolve_launcher_scenarios({"preset": "custom", "scenarios": ["TC-01"]})
+    assert [s.id for s in custom_one] == ["TC-01"]
+
+    # Negative coverage via both direct launcher call and HTTP POST /api/runs.
+    hub = LiveRunHub()
+    app = create_app(token=TEST_TOKEN, output_dir=launcher_env["output_dir"])
+    bad_payloads: list[tuple[dict[str, Any], str]] = [
+        ({"scenario_pack": "/etc"}, "Held-out scenario packs are only supported from the CLI"),
+        ({"scenario_pack": None}, "Held-out scenario packs are only supported from the CLI"),
+        ({"pack_only": True}, "Held-out scenario packs are only supported from the CLI"),
+        ({"pack_only": False}, "Held-out scenario packs are only supported from the CLI"),
+        ({"preset": "everything"}, "Unsupported preset"),
+        ({"preset": "   "}, "Unsupported preset"),
+        ({"preset": 123}, "Unsupported preset"),
+    ]
+    async with web_client(app) as client:
+        for extra, expected_msg in bad_payloads:
+            full_payload: dict[str, Any] = {
+                "base_url": _BASE_URL,
+                "model": "qwen",
+                "backend": "vllm",
+                **extra,
+            }
+            with pytest.raises(ValueError, match=expected_msg):
+                await launch_web_run(hub, full_payload, output_dir=launcher_env["output_dir"])
+
+            resp = await client.post("/api/runs", headers=AUTH_HEADERS, json=full_payload)
+            assert resp.status_code == 400
+            assert expected_msg in resp.json()["error"]

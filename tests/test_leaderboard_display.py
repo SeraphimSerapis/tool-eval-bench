@@ -685,7 +685,7 @@ class TestExportRuns:
         # lowest-scoring model "rank 1" above the 95 in the other cohort.
         monkeypatch.setattr(
             "tool_eval_bench.application.run_queries.recent_runs",
-            lambda limit=500: self._two_cohorts(),
+            lambda limit=500, **_kw: self._two_cohorts(),
         )
         export_runs(MagicMock(), fmt="csv")
         rows = {r["model"]: r for r in csv.DictReader(io.StringIO(capsys.readouterr().out))}
@@ -702,7 +702,7 @@ class TestExportRuns:
     def test_export_json_carries_the_cohort(self, monkeypatch, capsys) -> None:
         monkeypatch.setattr(
             "tool_eval_bench.application.run_queries.recent_runs",
-            lambda limit=500: self._two_cohorts(),
+            lambda limit=500, **_kw: self._two_cohorts(),
         )
         export_runs(MagicMock(), fmt="json")
         data = {entry["model"]: entry for entry in json.loads(capsys.readouterr().out)}
@@ -719,7 +719,7 @@ class TestExportRuns:
         missing_temp = _make_run(model="missing-temp")
         monkeypatch.setattr(
             "tool_eval_bench.application.run_queries.recent_runs",
-            lambda limit=500: [zero_temp, missing_temp],
+            lambda limit=500, **_kw: [zero_temp, missing_temp],
         )
         export_runs(MagicMock(), fmt="csv")
         rows = {r["model"]: r for r in csv.DictReader(io.StringIO(capsys.readouterr().out))}
@@ -734,7 +734,8 @@ class TestLeaderboardMarkup:
     def test_model_name_with_markup_renders_literally(self, monkeypatch) -> None:
         runs = [_make_run(model="mistral[/INST]-gguf"), _make_run(model="org/model[q4_k_m]")]
         monkeypatch.setattr(
-            "tool_eval_bench.application.run_queries.recent_runs", lambda limit=500: runs
+            "tool_eval_bench.application.run_queries.recent_runs",
+            lambda limit=500, **_kw: runs,
         )
         console = Console(file=StringIO(), width=240, no_color=True)
 
@@ -854,3 +855,58 @@ def test_exports_carry_the_reviewer_of_a_paired_run(fmt: str) -> None:
         rows = {entry["model"]: entry["reviewer_model"] for entry in _json.loads(output)}
     assert rows["small"] == "critic"
     assert rows["solo"] in ("", None)
+
+
+def test_leaderboard_and_export_filter_non_tool_eval_runs_in_sql(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """More than 500 newer perf/plugin runs must not push completed tool_eval runs out."""
+    from tool_eval_bench.storage import db
+    from tool_eval_bench.storage.db import RunRepository
+
+    db_path = tmp_path / "benchmarks.sqlite"
+    with RunRepository(db_path=db_path) as repo:
+        tool_run = _make_run(model="older-tool-model", final_score=91, scenario_count=3)
+        tool_run["run_id"] = "2026-01-01T00-00-00Z_tool01"
+        tool_run["created_at"] = "2026-01-01T00:00:00+00:00"
+        tool_run["status"] = "completed"
+        tool_run["run_type"] = "tool_eval"
+        repo.upsert_scenario_run(tool_run)
+
+        # Insert 520 newer non-tool_eval rows directly so the test runs in milliseconds.
+        perf_rows = [
+            (
+                f"2026-06-01T00-00-00Z_perf{idx:04d}",
+                f"2026-06-01T00:{idx // 60:02d}:{idx % 60:02d}+00:00",
+                "completed",
+                "perf-model",
+                json.dumps({"model": "perf-model", "backend": "vllm"}),
+                json.dumps({"samples": 1, "results": []}),
+                json.dumps({}),
+                "perf",
+                None,
+                None,
+            )
+            for idx in range(520)
+        ]
+        with repo._conn:
+            repo._conn.executemany(
+                """
+                INSERT INTO scenario_runs (
+                    run_id, created_at, status, model, config_json, scores_json,
+                    metadata_json, run_type, report_path, session_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                perf_rows,
+            )
+
+    monkeypatch.setattr(db, "_default_db_path", lambda: db_path)
+
+    console = Console(file=StringIO(), width=240, no_color=True)
+    print_leaderboard(console)
+    assert "older-tool-model" in console.file.getvalue()
+
+    capsys.readouterr()
+    export_runs(Console(file=StringIO(), width=240, no_color=True), fmt="json")
+    exported = json.loads(capsys.readouterr().out)
+    assert [entry["model"] for entry in exported] == ["older-tool-model"]

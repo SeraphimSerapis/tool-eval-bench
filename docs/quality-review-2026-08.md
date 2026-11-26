@@ -1,5 +1,11 @@
 # Quality review, August 2026
 
+> **Historical archive.** This document is a point-in-time review snapshot from August 2026
+> (version 2.6.0, 88 scenarios, 106 modules) kept for historical reference. Files, counts, and
+> recommendations cited below no longer reflect the current codebase. For current behavior and
+> structure, read [architecture.md](architecture.md), [methodology.md](methodology.md), and
+> [decisions.md](decisions.md).
+
 A full-project review of `tool-eval-bench` covering documentation, structure, performance,
 and test/tooling health. It records what was measured, what is wrong, and what to do about it.
 

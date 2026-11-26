@@ -60,116 +60,74 @@ logger = logging.getLogger(__name__)
 # Prometheus numeric value pattern — handles plain and scientific notation.
 # Counters are non-negative, but gauges such as a ratio can legitimately be
 # rendered with a sign by a compatible exporter.
-_NUM = r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)"
 _NUM_VALUE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 
-_COUNTER_PATTERNS: dict[str, re.Pattern[str]] = {
-    # Spec decode counters (vLLM).  The parser sums every matching series,
-    # because vLLM emits one counter set per engine.
-    "accepted_tokens": re.compile(
-        rf"^(?:vllm[:_]|tensorfold:)?spec_decode_num_accepted_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
+# Single-pass line parser matching Prometheus text exposition format.
+_PROM_LINE_RE = re.compile(
+    rf"^(?P<name>[A-Za-z_:][A-Za-z0-9_:]*)"
+    rf"(?:\{{(?P<labels>[^}}]*)\}})?[ \t]+"
+    rf"(?P<value>{_NUM_VALUE})(?:[ \t]+.*)?$"
+)
+
+
+def _prefixed(
+    prefixes: tuple[str, ...],
+    stem: str,
+    suffixes: tuple[str, ...] = ("",),
+) -> tuple[str, ...]:
+    return tuple(f"{prefix}{stem}{suffix}" for prefix in prefixes for suffix in suffixes)
+
+
+_VLLM_PREFIXES = ("", "vllm:", "vllm_")
+_VLLM_OR_TENSORFOLD_PREFIXES = ("", "vllm:", "vllm_", "tensorfold:")
+_OPT_TOTAL = ("", "_total")
+
+# Metric name aliases resolved via O(1) lookups against the single-pass parsed
+# Prometheus map instead of rescanning the full scrape body per metric family.
+_COUNTER_METRIC_NAMES: dict[str, tuple[str, ...]] = {
+    # Spec decode counters (vLLM / TensorFold).  The parser sums every matching
+    # series, because vLLM emits one counter set per engine.
+    "accepted_tokens": _prefixed(
+        _VLLM_OR_TENSORFOLD_PREFIXES, "spec_decode_num_accepted_tokens", _OPT_TOTAL
     ),
-    "draft_tokens": re.compile(
-        rf"^(?:vllm[:_]|tensorfold:)?spec_decode_num_draft_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
+    "draft_tokens": _prefixed(
+        _VLLM_OR_TENSORFOLD_PREFIXES, "spec_decode_num_draft_tokens", _OPT_TOTAL
     ),
-    "num_drafts": re.compile(
-        rf"^(?:vllm[:_]|tensorfold:)?spec_decode_num_drafts(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
+    "num_drafts": _prefixed(_VLLM_OR_TENSORFOLD_PREFIXES, "spec_decode_num_drafts", _OPT_TOTAL),
     # Engine throughput gauges (deprecated in vLLM ≥0.8, but still present in
     # older versions — we fall back to counter-derived rates when these are 0)
-    "prompt_tps": re.compile(
-        rf"^(?:vllm[:_])?avg_prompt_throughput_toks_per_s(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
-    "generation_tps": re.compile(
-        rf"^(?:vllm[:_])?avg_generation_throughput_toks_per_s(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
+    "prompt_tps": _prefixed(_VLLM_PREFIXES, "avg_prompt_throughput_toks_per_s"),
+    "generation_tps": _prefixed(_VLLM_PREFIXES, "avg_generation_throughput_toks_per_s"),
     # KV cache — old name (gpu_cache_usage_perc) and new name (kv_cache_usage_perc)
-    "gpu_cache_usage": re.compile(
-        rf"^(?:vllm[:_])?gpu_cache_usage_perc(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
-    "kv_cache_usage": re.compile(
-        rf"^(?:vllm[:_]|tensorfold:)?kv_cache_usage_perc(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
+    "gpu_cache_usage": _prefixed(_VLLM_PREFIXES, "gpu_cache_usage_perc"),
+    "kv_cache_usage": _prefixed(_VLLM_OR_TENSORFOLD_PREFIXES, "kv_cache_usage_perc"),
     # Requests
-    "running_reqs": re.compile(
-        rf"^(?:vllm[:_]|tensorfold:)?num_requests_running(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
-    "waiting_reqs": re.compile(
-        rf"^(?:vllm[:_]|tensorfold:)?num_requests_waiting(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
+    "running_reqs": _prefixed(_VLLM_OR_TENSORFOLD_PREFIXES, "num_requests_running"),
+    "waiting_reqs": _prefixed(_VLLM_OR_TENSORFOLD_PREFIXES, "num_requests_waiting"),
     # Prefix cache — old gauge and new counters
-    "prefix_cache_hit": re.compile(
-        rf"^(?:vllm[:_])?(?:gpu_)?prefix_cache_hit_rate(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
+    "prefix_cache_hit": (
+        *_prefixed(_VLLM_PREFIXES, "prefix_cache_hit_rate"),
+        *_prefixed(_VLLM_PREFIXES, "gpu_prefix_cache_hit_rate"),
     ),
-    "prefix_cache_queries": re.compile(
-        rf"^(?:vllm[:_])?prefix_cache_queries(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
-    "prefix_cache_hits": re.compile(
-        rf"^(?:vllm[:_])?prefix_cache_hits(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
+    "prefix_cache_queries": _prefixed(_VLLM_PREFIXES, "prefix_cache_queries", _OPT_TOTAL),
+    "prefix_cache_hits": _prefixed(_VLLM_PREFIXES, "prefix_cache_hits", _OPT_TOTAL),
     # Token counts (cumulative) — primary source for throughput in vLLM ≥0.8
-    "prompt_tokens_total": re.compile(
-        rf"^(?:vllm[:_]|tensorfold:)?prompt_tokens_total(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
-    "generation_tokens_total": re.compile(
-        rf"^(?:vllm[:_]|tensorfold:)?generation_tokens_total(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
+    "prompt_tokens_total": _prefixed(_VLLM_OR_TENSORFOLD_PREFIXES, "prompt_tokens_total"),
+    "generation_tokens_total": _prefixed(_VLLM_OR_TENSORFOLD_PREFIXES, "generation_tokens_total"),
     # -- llama.cpp counters (llamacpp: prefix) --
-    "llamacpp_prompt_tokens_total": re.compile(
-        rf"^llamacpp:prompt_tokens_total\s+{_NUM}",
-        re.MULTILINE,
-    ),
-    "llamacpp_predicted_tokens_total": re.compile(
-        rf"^llamacpp:tokens_predicted_total\s+{_NUM}",
-        re.MULTILINE,
-    ),
-    "llamacpp_prompt_tokens_seconds": re.compile(
-        rf"^llamacpp:prompt_tokens_seconds\s+{_NUM}",
-        re.MULTILINE,
-    ),
-    "llamacpp_predicted_tokens_seconds": re.compile(
-        rf"^llamacpp:predicted_tokens_seconds\s+{_NUM}",
-        re.MULTILINE,
-    ),
-    "llamacpp_requests_processing": re.compile(
-        rf"^llamacpp:requests_processing\s+{_NUM}",
-        re.MULTILINE,
-    ),
-    "llamacpp_requests_deferred": re.compile(
-        rf"^llamacpp:requests_deferred\s+{_NUM}",
-        re.MULTILINE,
-    ),
-    "llamacpp_kv_cache_usage_ratio": re.compile(
-        rf"^llamacpp:kv_cache_usage_ratio(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
+    "llamacpp_prompt_tokens_total": ("llamacpp:prompt_tokens_total",),
+    "llamacpp_predicted_tokens_total": ("llamacpp:tokens_predicted_total",),
+    "llamacpp_prompt_tokens_seconds": ("llamacpp:prompt_tokens_seconds",),
+    "llamacpp_predicted_tokens_seconds": ("llamacpp:predicted_tokens_seconds",),
+    "llamacpp_requests_processing": ("llamacpp:requests_processing",),
+    "llamacpp_requests_deferred": ("llamacpp:requests_deferred",),
+    "llamacpp_kv_cache_usage_ratio": ("llamacpp:kv_cache_usage_ratio",),
     # llama.cpp now exports the same cumulative speculative counters as vLLM.
-    "llamacpp_accepted_tokens": re.compile(
-        rf"^llamacpp:spec_decode_num_accepted_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
+    "llamacpp_accepted_tokens": _prefixed(
+        ("llamacpp:",), "spec_decode_num_accepted_tokens", _OPT_TOTAL
     ),
-    "llamacpp_draft_tokens": re.compile(
-        rf"^llamacpp:spec_decode_num_draft_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
-    "llamacpp_num_drafts": re.compile(
-        rf"^llamacpp:spec_decode_num_drafts(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
-        re.MULTILINE,
-    ),
+    "llamacpp_draft_tokens": _prefixed(("llamacpp:",), "spec_decode_num_draft_tokens", _OPT_TOTAL),
+    "llamacpp_num_drafts": _prefixed(("llamacpp:",), "spec_decode_num_drafts", _OPT_TOTAL),
 }
 
 # Per-position metrics.  The current vLLM and llama.cpp exporters use
@@ -216,20 +174,27 @@ def _parse_position_index(raw: str | None) -> int | None:
     return index if index >= 0 else None
 
 
+def _parse_prometheus_metrics(text: str) -> dict[str, list[tuple[dict[str, str], float]]]:
+    """Parse Prometheus exposition text in one linear pass into ``name -> [(labels, value)]``."""
+    parsed: dict[str, list[tuple[dict[str, str], float]]] = {}
+    for line in text.splitlines():
+        if not line or line[0] == "#":
+            continue
+        match = _PROM_LINE_RE.match(line)
+        if match is None:
+            continue
+        val = float(match.group("value"))
+        if not math.isfinite(val):
+            continue
+        raw_labels = match.group("labels")
+        labels = _parse_labels(raw_labels) if raw_labels else {}
+        parsed.setdefault(match.group("name"), []).append((labels, val))
+    return parsed
+
+
 def _metric_series(text: str, metric_name: str) -> list[tuple[dict[str, str], float]]:
     """Return all ``(labels, value)`` series for one exact metric name."""
-    pattern = re.compile(
-        rf"^{re.escape(metric_name)}"
-        rf"(?:\{{(?P<labels>[^}}]*)\}})?[ \t]+"
-        rf"(?P<value>{_NUM_VALUE})(?:[ \t]+.*)?$",
-        re.MULTILINE,
-    )
-    series: list[tuple[dict[str, str], float]] = []
-    for match in pattern.finditer(text):
-        val = float(match.group("value"))
-        if math.isfinite(val):
-            series.append((_parse_labels(match.group("labels")), val))
-    return series
+    return _parse_prometheus_metrics(text).get(metric_name, [])
 
 
 def _is_rank_label(name: str) -> bool:
@@ -260,16 +225,6 @@ def _select_gauge_series(
     if not series:
         return None
     return min(series, key=_gauge_series_key)[1]
-
-
-def _sum_pattern_values(pattern: re.Pattern[str], text: str) -> tuple[float | None, int]:
-    """Sum all numeric matches for a metric pattern and return count too."""
-    finite = [
-        val for match in pattern.finditer(text) if math.isfinite(val := float(match.group(1)))
-    ]
-    if not finite:
-        return None, 0
-    return sum(finite), len(finite)
 
 
 def counter_delta(previous: float, current: float) -> float:
@@ -590,31 +545,31 @@ class SpecLiveDelta:
 def _parse_snapshot(text: str) -> MetricsSnapshot:
     """Parse Prometheus text into a MetricsSnapshot."""
     snap = MetricsSnapshot(timestamp=time.time())
+    metrics = _parse_prometheus_metrics(text)
     snap.strata_metrics_present = metrics_namespace_present(text, STRATA)
 
-    for name, pattern in _COUNTER_PATTERNS.items():
-        value, count = _sum_pattern_values(pattern, text)
-        if value is None:
+    present_counter_fields: set[str] = set()
+    for name, metric_names in _COUNTER_METRIC_NAMES.items():
+        matched_names = [m for m in metric_names if m in metrics]
+        if not matched_names:
             continue
+        present_counter_fields.add(name)
         # Cumulative counters are additive across vLLM engines and llama.cpp
         # workers, and so are request counts.  Other gauges are state for one
         # engine and must not be summed.
         if name in _SUM_COUNTER_KEYS or name in _SUM_GAUGE_KEYS:
-            setattr(snap, name, value)
+            setattr(snap, name, sum(val for m in matched_names for _, val in metrics[m]))
         else:
-            first_finite = next(
-                (
-                    val
-                    for match in pattern.finditer(text)
-                    if math.isfinite(val := float(match.group(1)))
-                ),
-                None,
-            )
-            if first_finite is not None:
-                setattr(snap, name, first_finite)
+            if len(matched_names) == 1:
+                first_finite = metrics[matched_names[0]][0][1]
+            else:
+                matched_set = set(matched_names)
+                first_key = next(k for k in metrics if k in matched_set)
+                first_finite = metrics[first_key][0][1]
+            setattr(snap, name, first_finite)
         if name in {"accepted_tokens", "draft_tokens", "num_drafts"}:
-            for match in pattern.finditer(text):
-                if match.group(0).startswith(TENSORFOLD.metrics_prefixes):
+            for metric_name in matched_names:
+                if metric_name.startswith(TENSORFOLD.metrics_prefixes):
                     snap.tensorfold_spec_metrics_present = True
                 else:
                     snap.vllm_spec_metrics_present = True
@@ -626,7 +581,7 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
     # SGLang exposes direct gauges.  Every scheduler/rank can emit a series;
     # select a rank-zero representative rather than summing replicated state.
     for field_name, metric_name in _SGLANG_SPEC_METRICS.items():
-        value = _select_gauge_series(_metric_series(text, metric_name))
+        value = _select_gauge_series(metrics.get(metric_name, []))
         if value is not None:
             setattr(snap, f"sglang_{field_name}", value)
             snap.sglang_spec_metrics_present = True
@@ -637,7 +592,7 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
     # vLLM fields.  Keep the generic fields populated for a pure SGLang scrape.
     sglang_engine_values: dict[str, float] = {}
     for field_name, metric_name in _SGLANG_ENGINE_METRICS.items():
-        value = _select_gauge_series(_metric_series(text, metric_name))
+        value = _select_gauge_series(metrics.get(metric_name, []))
         if value is not None:
             sglang_engine_values[field_name] = value
     if sglang_engine_values:
@@ -657,7 +612,7 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
     # engines.  Group by position before calculating rates.
     for metric_name in _PER_POSITION_RATE_METRIC_NAMES:
         by_position: dict[int, list[tuple[dict[str, str], float]]] = {}
-        for labels, value in _metric_series(text, metric_name):
+        for labels, value in metrics.get(metric_name, ()):
             position_index = _parse_position_index(labels.get("position"))
             if position_index is not None:
                 by_position.setdefault(position_index, []).append((labels, value))
@@ -670,7 +625,7 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
         *_PER_POSITION_COUNTER_METRIC_NAMES,
         *_LLAMACPP_PER_POSITION_COUNTER_METRIC_NAMES,
     ):
-        for labels, value in _metric_series(text, metric_name):
+        for labels, value in metrics.get(metric_name, ()):
             position_index = _parse_position_index(labels.get("position"))
             if position_index is None:
                 continue
@@ -686,7 +641,7 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
                 snap.vllm_spec_metrics_present = True
 
     for metric_name in _PER_POSITION_DRAFTED_METRIC_NAMES:
-        for labels, value in _metric_series(text, metric_name):
+        for labels, value in metrics.get(metric_name, ()):
             position_index = _parse_position_index(labels.get("position"))
             if position_index is None:
                 continue
@@ -703,13 +658,13 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
     flare_per_pos_drafted: dict[int, float] = {}
     if metrics_namespace_present(text, FLARE):
         for field_name, metric_name in _FLARE_SPEC_METRICS.items():
-            series = _metric_series(text, metric_name)
+            series = metrics.get(metric_name, [])
             if series:
                 flare_spec_values[field_name] = sum(val for _, val in series)
                 snap.flare_spec_metrics_present = True
                 snap.flare_metrics_present = True
 
-        for labels, value in _metric_series(text, _FLARE_PER_POSITION_METRIC_NAME):
+        for labels, value in metrics.get(_FLARE_PER_POSITION_METRIC_NAME, ()):
             depth = _parse_position_index(labels.get("depth"))
             if depth is None or depth < 1:
                 continue
@@ -730,13 +685,13 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
                 snap.flare_metrics_present = True
 
         for field_name, metric_name in _FLARE_ENGINE_SUM_METRICS.items():
-            series = _metric_series(text, metric_name)
+            series = metrics.get(metric_name, [])
             if series:
                 flare_engine_values[field_name] = sum(val for _, val in series)
                 snap.flare_metrics_present = True
 
         for field_name, metric_name in _FLARE_ENGINE_GAUGE_METRICS.items():
-            value = _select_gauge_series(_metric_series(text, metric_name))
+            value = _select_gauge_series(metrics.get(metric_name, []))
             if value is not None:
                 flare_engine_values[field_name] = value
                 snap.flare_metrics_present = True
@@ -765,19 +720,19 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
     if metrics_namespace_present(text, SPLASH):
         snap.splash_metrics_present = True
         for field_name, metric_name in _SPLASH_SPEC_METRICS.items():
-            series = _metric_series(text, metric_name)
+            series = metrics.get(metric_name, [])
             if series:
                 splash_spec_values[field_name] = sum(val for _, val in series)
                 snap.splash_spec_metrics_present = True
         for field_name, metric_name in _SPLASH_ENGINE_SUM_METRICS.items():
-            series = _metric_series(text, metric_name)
+            series = metrics.get(metric_name, [])
             if series:
                 splash_engine_values[field_name] = sum(val for _, val in series)
         for field_name, metric_names in (
             ("running_reqs", _SPLASH_RUNNING_METRICS),
             ("waiting_reqs", _SPLASH_WAITING_METRICS),
         ):
-            phases = [_select_gauge_series(_metric_series(text, name)) for name in metric_names]
+            phases = [_select_gauge_series(metrics.get(name, [])) for name in metric_names]
             counts = [count for count in phases if count is not None]
             if counts:
                 splash_engine_values[field_name] = sum(counts)
@@ -788,7 +743,7 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
     # differenced against it on the next poll.
     for field_name, value in splash_engine_values.items():
         if (
-            _sum_pattern_values(_COUNTER_PATTERNS[field_name], text)[0] is None
+            field_name not in present_counter_fields
             and field_name not in flare_engine_values
             and field_name not in sglang_engine_values
         ):

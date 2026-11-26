@@ -178,11 +178,16 @@ def write_scenario_report(
         "",
         f"- **Run ID**: `{run_id}`",
         f"- **Date**: `{now.isoformat()}`",
-        f"- **tool-eval-bench**: `{version_str.strip(' ()')}`" if version_str else "",
-        final_score_line,
-        f"- **Total Points**: {summary.total_points} / {summary.max_points}",
-        f"- **Rating**: {summary.rating}",
     ]
+    if version_str:
+        md.append(f"- **tool-eval-bench**: `{version_str.strip(' ()')}`")
+    md.extend(
+        [
+            final_score_line,
+            f"- **Total Points**: {summary.total_points} / {summary.max_points}",
+            f"- **Rating**: {summary.rating}",
+        ]
+    )
     if reviewer:
         md.append(
             f"- **Reviewer**: `{_markdown_table_cell(str(reviewer.get('model', '?')))}` "
@@ -258,8 +263,8 @@ def write_scenario_report(
             f"| {_markdown_table_cell(pair)} | {delta:+d} |"
             for pair, delta in summary.toolset_deltas.items()
         )
-    # Filter empty lines from conditional version stamp
-    md = [line for line in md if line is not None and line != ""] + [""]
+    if diagnostics or summary.toolset_deltas:
+        md.append("")
 
     # Tool definition token overhead estimate (PERF-03)
     # Check if any category-L (Toolset Scale) scenarios were included —
